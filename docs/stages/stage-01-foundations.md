@@ -63,8 +63,11 @@ LLM API 是无状态的——每轮请求都把全部历史重发一遍。agent 
 **Q2：ReAct 循环的终止条件有哪些？**
 ① 模型返回的消息没有 tool_calls（认为任务完成，正常终止）；② 达到 MaxSteps 上限（保险丝，异常终止）；③ API 不可恢复错误（如鉴权失败）。生产中还常有 ④ 超时熔断和 ⑤ 成本预算上限。
 
-**Q3：为什么 agent 循环里通常用非流式请求？**
-因为需要拿到**完整的** tool_calls 才能决定下一步动作（调哪个工具、传什么参数）。流式下 tool_calls 是分片到达的，得先缓冲拼完整才能用——流式的价值在最终答案返回给用户的环节，不在循环内部。
+**Q3：为什么 agent 循环里通常用非流式请求？流式能不能进循环？**
+核心不变量是：**做决策（是否调工具）之前必须拿到完整的 tool_calls**。两种做法都满足它：
+① 循环内非流式、只在最终答案环节流式（最简单，早期教程常见）；
+② 循环内也流式，但客户端必须把 `delta.tool_calls` 分片按 index 聚合成完整结果再判断（本项目做法，见 `ChatStream`）——好处是最终答案的流式体验直接在循环内获得，不用写第二套逻辑。
+绝对不行的是：边收流边决策，或为了流式绕开 agent 循环（那样工具永远不会被触发）。
 
 **Q4：对话历史无限增长怎么办？**
 三板斧：① 滑动窗口（只留最近 N 轮，简单粗暴）；② 摘要压缩（让 LLM 总结早期历史替换成一条 system/summary 消息，保留关键信息）；③ 重要事实抽取到结构化存储（长期 memory）。选型取决于会话长度和任务类型。
@@ -92,7 +95,7 @@ LLM API 是无状态的——每轮请求都把全部历史重发一遍。agent 
 | 概念 A | 概念 B | 区别要点 |
 |---|---|---|
 | tool_calls（assistant） | role=tool 消息 | 前者是模型发起的调用**请求**，后者是代码执行后回喂的**结果**，靠 ToolCallID 配对 |
-| 流式（SSE） | 非流式 | 流式逐 token 返回、首字延迟低，适合最终答案；非流式一次拿全，适合循环内决策 |
+| 流式（SSE） | 非流式 | 流式逐 token 返回、首字延迟低；非流式一次拿全。聚合 tool_calls 分片后两者可对上层同构（本项目 `ChatStream` 与 `Chat` 都返回 `*ChatResponse`） |
 | 无状态 API | 会话状态 | API 本身不记任何历史；多轮对话 = 客户端每轮重发全部 messages |
 | system prompt | user prompt | system 立规矩（优先级高、全程有效），user 是当前任务输入；注入攻击常利用 user 内容篡改指令，敏感规则只放 system |
 | 温度 temperature | top_p | 都控随机性，一般只调一个；agent 场景低 temperature 即可，不必动 top_p |
@@ -142,6 +145,13 @@ LLM API 是无状态的——每轮请求都把全部历史重发一遍。agent 
 6. **必须设 MaxSteps 保险丝**：模型可能反复调工具停不下来，死循环就是烧钱循环。
 7. **`go/types.Eval` 对无值表达式（如 `println(1)`）返回 err==nil 但 Value==nil**，直接 `.String()` 会 panic——已修复并加了测试。
 8. embedding 返回数组**顺序要按 index 归位**，不能假设与输入顺序一致（阶段二用）。
+9. **SSE 的 delta tag 写错会静默失败**：`streamChunk` 外层字段必须是 `json:"delta"`，写成 `content` 时 Unmarshal 不报错但永远解析不到内容——流式"能跑但啥也不输出"先查这里。
+10. **流式 tool_calls 是分片到达的**：首片带 index/id/name，后续分片只有 index + arguments 片段，必须按 index 拼接完整后才能当 JSON 解析、才能执行工具。
+11. **流式要接在 agent 循环内部**，不能绕过 `Run` 直接调 `ChatStream`——否则用户输入不进历史、工具永不触发、多轮失忆（练习 1 实踩）。
+12. **Go struct 的 json tag 丢失会静默失效**：`Stream bool` 少了 `` `json:"stream"` `` 会序列化成 `"Stream"` 字段，服务端忽略后表现为"不流式也不报错"。
+13. **重试循环的 off-by-one**：`for attempt := range maxRetries` 只有 maxRetries 次尝试（1 首发 + 2 重试），4s 档永远走不到；"最多重试 3 次"要写 `attempt <= maxRetries`。
+14. **错误分类的"接线"漏接会静默失效**：`ChatWithRetry` 靠 `errors.As` 取 `APIError` 的状态码，如果 `Chat` 的非 200 分支仍返回 `fmt.Errorf` 普通错误，所有错误都落入默认重试分支，401 也会被重试——没有任何报错提示。
+15. **压缩切分点后移要有上界防护**：保留区若整组是 tool 消息（大量并行调用时），split 会后移到末尾把最近上下文全压掉，此时应放弃本轮压缩；摘要输入还要带上工具调用信息（assistant 调工具时 Content 为空）。
 
 ## 五、已完成
 
@@ -149,13 +159,14 @@ LLM API 是无状态的——每轮请求都把全部历史重发一遍。agent 
 - ✅ 内置工具：calculator（`go/types` 安全求值）、http_fetch（截断保护）
 - ✅ 单测：calculator 求值 / 拒绝非常量表达式 / 未知工具分发
 - ✅ 注释规范固化到 `AGENTS.md`
+- ✅ 练习 1：SSE 流式输出（完整版：`ChatStream` 聚合 content + tool_calls 分片，返回与非流式同构的 `*ChatResponse`，已接入 ReAct 循环）
 
 ## 六、下一步（练习，按难度排序）
 
 | # | 练习 | 考察点 | 代码位置（TODO 标注处） | 状态 |
 |---|---|---|---|---|
-| 1 | SSE 流式输出：`llm.Client` 加 `ChatStream`（`"stream": true`，解析 `data:` 行） | 面试高频手写题 | `mini-agent/internal/llm/client.go` 末尾 | ⬜ |
-| 2 | 重试与限流：429/5xx 指数退避，最多 3 次 | 生产化基本功 | `mini-agent/internal/llm/client.go` 末尾 | ⬜ |
+| 1 | SSE 流式输出：`llm.Client` 加 `ChatStream`（`"stream": true`，解析 `data:` 行，聚合 tool_calls 分片并接入 ReAct 循环） | 面试高频手写题 | `mini-agent/internal/llm/client.go` | ✅（含 tool_calls 扩展） |
+| 2 | 重试与限流：429/5xx 指数退避，最多 3 次 | 生产化基本功 | `mini-agent/internal/llm/client.go` | 🔄 实现已完成（已修正 off-by-one 与 APIError 接线），待运行验收 |
 | 3 | 上下文压缩：messages 超 N 条时先让 LLM 总结早期历史再截断 | 长会话必备 | `mini-agent/internal/agent/agent.go` 末尾 | ⬜ |
 | 4 | 文件读写工具：思考安全边界（限制工作目录、禁绝对路径逃逸） | 工具安全设计 | `mini-agent/internal/tools/tools.go` 末尾 | ⬜ |
 
@@ -163,5 +174,5 @@ LLM API 是无状态的——每轮请求都把全部历史重发一遍。agent 
 
 - [ ] 能手画 ReAct 循环时序图并讲清每条消息的 role（对照 3.3 节）
 - [ ] 能流畅回答 3.1 节全部 10 个考点
-- [ ] 完成练习 1（SSE）
+- [x] 完成练习 1（SSE，含 tool_calls 流式聚合扩展）
 - [ ] CLI 能跑通"计算 + 抓网页"的多步工具调用

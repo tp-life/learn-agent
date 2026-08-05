@@ -6,7 +6,7 @@
 ## 参考实现
 
 ```go
-// filetool.go
+// file.go（对应 TODO 要求的文件名）
 package tools
 
 import (
@@ -144,7 +144,7 @@ registry.Register(tools.NewWriteFile("./workspace"))
 ## 关键设计点
 
 1. **防线在代码，不在模型**：防路径穿越不能靠 prompt 里写"不要访问敏感文件"——prompt 注入可以绕过模型层的任何"自觉"。`resolve` 是唯一可信的防线，所有文件操作强制经过它。
-2. **`filepath.Clean` 之后再判断前缀**：`Join(root, "../../etc/passwd")` 在 Clean 后变成 `/etc/passwd`，前缀比对直接拦下。不做 Clean 就比对是经典漏洞写法（`a/../..` 之类能绕过）。
+2. **`filepath.Clean` 之后再判断前缀**：`Join(root, "../../etc/passwd")` 经 Clean 后，root 为相对路径（如 `./workspace`）时变成 `../etc/passwd`，root 为绝对路径时变成 `/etc/passwd`——两种情况的共同点是**都不再落在 root 前缀内**，前缀比对直接拦下。不做 Clean 就比对是经典漏洞写法（`a/../..` 之类能绕过）。
 3. **绝对路径直接拒绝**：相对路径语义让"工作目录"这个边界清晰可守，也少一类绕过手段。
 4. **写工具的语义要在 Description 里讲死**："覆盖还是追加""是否建父目录"必须明确，否则模型会在拿不准时乱猜（比如以为 write 是追加）。
 5. **写结果回执要具体**：返回"已写入 X（N 字节）"而不是"成功"，模型后续轮次能据此向用户汇报，也能自己 sanity check。
