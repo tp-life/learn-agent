@@ -25,6 +25,11 @@ type Agent struct {
 
 	MaxSteps int // 防止死循环的保险丝：模型可能反复调工具停不下来
 	Verbose  bool
+
+	// OnDelta 若设置，模型生成的文本增量会实时回调（用于流式打印）。
+	// 注意：只有模型在写最终回答时才有 content 增量；当它决定调工具时，
+	// 流式分片里是 tool_calls 而非 content，不会触发这个回调。
+	OnDelta func(text string)
 }
 
 func New(client *llm.Client, registry *tools.Registry, systemPrompt string) *Agent {
@@ -41,7 +46,10 @@ func (a *Agent) Run(userInput string) (string, error) {
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userInput})
 
 	for step := 0; step < a.MaxSteps; step++ {
-		resp, err := a.client.Chat(a.messages, a.registry.Schemas())
+		// 用流式请求替代非流式：返回结构相同（*llm.ChatResponse），
+		// 但 content 增量会实时通过 OnDelta 打出。tool_calls 由
+		// ChatStream 内部按 index 聚合，这里拿到的就是完整结果。
+		resp, err := a.client.ChatStream(a.messages, a.registry.Schemas(), a.OnDelta)
 		if err != nil {
 			return "", err
 		}
@@ -59,6 +67,9 @@ func (a *Agent) Run(userInput string) (string, error) {
 
 		// 没有工具调用 = 模型给出了最终答案，循环结束
 		if len(msg.ToolCalls) == 0 {
+			if a.OnDelta != nil {
+				fmt.Println() // 流式打印后补一个换行
+			}
 			return msg.Content, nil
 		}
 

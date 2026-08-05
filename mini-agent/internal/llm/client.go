@@ -73,73 +73,51 @@ func (c *Client) Chat(messages []Message, tools []Tool) (*ChatResponse, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// 429（限流）和 5xx 在生产中应做指数退避重试 —— 这是留给你的练习
-		return nil, fmt.Errorf("api error %d: %s", resp.StatusCode, string(respBody))
+		// 必须返回带状态码的 APIError 而非普通 error：
+		// ChatWithRetry 靠 errors.As 取回状态码来区分"值不值得重试"，
+		// 这里若返回 fmt.Errorf，重试分类会静默失效（401 也会被重试）。
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: string(respBody)}
 	}
 
 	var chatResp ChatResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
-	fmt.Printf("模型返回数据：%s\n", respBody)
 	if len(chatResp.Choices) == 0 {
 		return nil, fmt.Errorf("empty choices in response")
 	}
 	return &chatResp, nil
 }
 
-// ============================ 练习区（由学习者完成） ============================
+// ChatStream 发起流式对话补全（SSE），每收到一段文本增量就回调 onDelta，
+// 流结束后返回聚合好的完整 ChatResponse——形态与非流式 Chat 完全一致，
+// 因此 agent 循环可以无差别地使用两者。
 //
-// TODO(练习1): SSE 流式输出 —— 面试高频手写题
+// 聚合逻辑的两个要点：
+//   - content 是逐片到达的文本，直接顺序拼接即可；
+//   - tool_calls 是分片到达的，必须按 index 归组后拼接 arguments 字符串
+//     （原理见 types.go 中 streamToolCall 的注释）。
 //
-// 任务：给 Client 增加方法
-//
-//	func (c *Client) ChatStream(messages []Message, onDelta func(text string)) (*ChatResponse, error)
-//
-// 要求：
-//   - 请求体加 "stream": true，响应是 text/event-stream（SSE）格式
-//   - 每收到一个增量片段就回调 onDelta；全部到齐后返回聚合好的完整结果
-//
-// 提示：
-//   - SSE 响应体按行读取（bufio.Scanner），数据行以 "data: " 开头，
-//     结束标志是一行 "data: [DONE]"
-//   - 流式响应的 JSON 结构和非流式不同：增量在 choices[0].delta.content
-//     （非流式是 choices[0].message.content），需要定义新的响应结构体
-//   - 思考：流式时 tool_calls 是分片到达的，如果要支持，需要按 index 拼接
-//     （第一版可以先不支持工具调用，只做纯文本流式）
-//
-// 验收：把 main.go 的输出发送改为流式打印，能逐字看到回答"打出来"。
-// 参考答案：docs/solutions/stage-01/exercise-1-sse-streaming.md（完成后再看）
-//
-// TODO(练习2): 重试与限流 —— 生产化基本功
-//
-// 任务：包装 Chat 方法，遇到 429（限流）和 5xx（服务端错误）时指数退避重试，
-// 最多 3 次；4xx 其他错误（如 401 鉴权失败）不重试直接返回。
-//
-// 提示：
-//   - 退避间隔：1s、2s、4s（可用 time.Sleep，注意别在测试里真等）
-//   - 区分"可重试错误"和"不可重试错误"：可以定义一个带状态码的错误类型
-//   - 加分项：支持 context.Context 取消
-//
-// 验收：暂时把 baseURL 改错触发 5xx，观察日志中出现 3 次重试后报错。
-// 参考答案：docs/solutions/stage-01/exercise-2-retry-backoff.md（完成后再看）
-
-func (c *Client) ChatStream(messages []Message, onDelta func(text string)) (string, error) {
+// 为什么返回值是 *ChatResponse 而不是 string：
+// agent 循环需要的不只是文本，还有 tool_calls 和 finish_reason；
+// 让流式和非流式返回同一种类型，上层就不用为流式写第二套分支。
+func (c *Client) ChatStream(messages []Message, tools []Tool, onDelta func(text string)) (*ChatResponse, error) {
 	reqBody := ChatRequest{
 		Model:       c.model,
 		Messages:    messages,
+		Tools:       tools,
 		Temperature: 0.3,
 		Stream:      true,
 	}
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
 	req, err := http.NewRequest(http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
@@ -147,25 +125,27 @@ func (c *Client) ChatStream(messages []Message, onDelta func(text string)) (stri
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", err
+		return nil, fmt.Errorf("http call: %w", err)
 	}
-
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("api error %d, %s", resp.StatusCode, b)
+		return nil, &APIError{StatusCode: resp.StatusCode, Body: string(b)}
 	}
-	fmt.Println("开始请求数据：", messages)
+
 	scanner := bufio.NewScanner(resp.Body)
+	// 默认 64KB 的行上限对长分片可能不够，放宽到 1MB
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-	var full strings.Builder
+	var content strings.Builder
+	var toolCalls []ToolCall   // 按下标聚合分片；len 随最大 index 增长
+	finishReason := ""
+
 	for scanner.Scan() {
 		line := scanner.Text()
-		fmt.Println(line)
 		if !strings.HasPrefix(line, "data: ") {
-			continue // 跳过空行、注释行
+			continue // 跳过空行、注释行（SSE 用空行分隔事件）
 		}
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
@@ -174,25 +154,49 @@ func (c *Client) ChatStream(messages []Message, onDelta func(text string)) (stri
 
 		var chunk streamChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			continue
+			continue // 单片解析失败不致命，跳过即可（生产中可记日志）
 		}
-
 		if len(chunk.Choices) == 0 {
 			continue
 		}
+		choice := chunk.Choices[0]
 
-		delta := chunk.Choices[0].Delta.Content
-		if delta != "" {
-			full.WriteString(delta)
-			onDelta(delta)
+		if choice.Delta.Content != "" {
+			content.WriteString(choice.Delta.Content)
+			if onDelta != nil {
+				onDelta(choice.Delta.Content)
+			}
+		}
+
+		// tool_calls 分片聚合：按 index 定位到对应 ToolCall，
+		// id/type/name 只在首个分片出现，arguments 逐片拼接。
+		for _, d := range choice.Delta.ToolCalls {
+			for len(toolCalls) <= d.Index {
+				toolCalls = append(toolCalls, ToolCall{})
+			}
+			tc := &toolCalls[d.Index]
+			if d.ID != "" {
+				tc.ID = d.ID
+			}
+			if d.Type != "" {
+				tc.Type = d.Type
+			}
+			tc.Function.Name += d.Function.Name // name 理论上也可能分片，用 += 最稳
+			tc.Function.Arguments += d.Function.Arguments
+		}
+
+		if choice.FinishReason != "" {
+			finishReason = choice.FinishReason
 		}
 	}
-
 	if err := scanner.Err(); err != nil {
-		return full.String(), fmt.Errorf("read stream: %w", err)
+		return nil, fmt.Errorf("read stream: %w", err)
 	}
 
-	return full.String(), nil
+	msg := Message{Role: "assistant", Content: content.String(), ToolCalls: toolCalls}
+	return &ChatResponse{
+		Choices: []Choice{{Message: msg, FinishReason: finishReason}},
+	}, nil
 }
 
 type APIError struct {
@@ -204,6 +208,14 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("api error %d: %s", e.StatusCode, e.Body)
 }
 
+// retryable 判断错误是否值得重试：
+//   - 429 限流 / 5xx 服务端错误：值得，通常是临时故障
+//   - 无法识别的错误（网络层错误居多）：默认重试，属于保守策略
+//   - 其他 4xx（401 鉴权失败、400 参数错误）：不值得，重试也是同样结果
+//
+// 注意默认分支的取舍：marshal/build request 这类本地逻辑错误其实
+// 重试也必然失败，归进"可重试"只是图省事；要严格可以再加一类
+// "本地错误不重试"。面试追问"哪些错误不该重试"时这一点能加分。
 func retryable(err error) bool {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
@@ -213,10 +225,20 @@ func retryable(err error) bool {
 	return true
 }
 
+// ChatWithRetry 包装 Chat，指数退避，最多重试 maxRetries 次
+// （总尝试次数 = 1 次首发 + maxRetries 次重试）。
+// 退避间隔：1s → 2s → 4s（每次左移一位翻倍）。
+//
+// 易踩的坑：循环写成 `for attempt := range maxRetries` 会少一次尝试
+// （off-by-one），maxRetries=3 时实际只重试 2 次，4s 那一档永远走不到。
+//
+// 注意：agent 主循环走的是 ChatStream（练习 1 后），本方法目前主要用于
+// 摘要等非流式辅助调用；生产中应把退避逻辑抽成通用 helper 让两者共用
+// （流式重试有额外语义：onDelta 已打出的增量在重试时会重复，需要去重或清空）。
 func (c *Client) ChatWithRetry(messages []Message, tools []Tool, maxRetries int) (*ChatResponse, error) {
 	var lastErr error
 
-	for attempt := range maxRetries {
+	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if attempt > 0 {
 			backoff := time.Second << (attempt - 1)
 			fmt.Printf("[retry] 第%d 次重试， 等待 %v （上次错误：%v）\n", attempt, backoff, lastErr)

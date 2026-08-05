@@ -37,6 +37,9 @@ func main() {
 
 	ag := agent.New(client, registry, systemPrompt)
 	ag.Verbose = true // 打印每一步的工具调用，方便观察 ReAct 循环
+	// 流式打印最终回答：content 增量会实时回调这里；
+	// 中间的工具调用步骤没有 content，不会干扰输出。
+	ag.OnDelta = func(text string) { fmt.Print(text) }
 
 	fmt.Println("mini-agent 已启动，输入问题开始对话，输入 exit 退出。")
 	scanner := bufio.NewScanner(os.Stdin)
@@ -53,14 +56,10 @@ func main() {
 			break
 		}
 
-		// answer, err := ag.Run(input)
-		answer, err := client.ChatStream(ag.Messages(), func(text string) {
-			fmt.Println("返回数据:", text)
-		})
-		if err != nil {
+		// 回答已在 OnDelta 中流式打出，这里只需处理错误
+		if _, err := ag.Run(input); err != nil {
 			fmt.Println("出错:", err)
 			continue
 		}
-		fmt.Println(answer)
 	}
 }
