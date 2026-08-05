@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"mini-agent/internal/llm"
 	"mini-agent/internal/tools"
+	"strings"
 )
 
 // Agent 持有一次任务的全部状态。
@@ -46,6 +47,11 @@ func (a *Agent) Run(userInput string) (string, error) {
 	a.messages = append(a.messages, llm.Message{Role: "user", Content: userInput})
 
 	for step := 0; step < a.MaxSteps; step++ {
+
+		if err := a.compressIfNeeded(); err != nil && a.Verbose {
+			fmt.Printf("[compress] 失败（忽略，继续对话）： %v\n", err)
+		}
+
 		// 用流式请求替代非流式：返回结构相同（*llm.ChatResponse），
 		// 但 content 增量会实时通过 OnDelta 打出。tool_calls 由
 		// ChatStream 内部按 index 聚合，这里拿到的就是完整结果。
@@ -123,3 +129,55 @@ func (a *Agent) Messages() []llm.Message {
 // 验收：构造一段 30+ 轮的长对话（可以脚本批量发），观察压缩触发后
 // 对话仍能正常继续，且模型"记得"早期提到的关键信息（如用户名字）。
 // 参考答案：docs/solutions/stage-01/exercise-3-context-compression.md（完成后再看）
+
+const summaryPrompt = `请把以下对话历史压缩成一段摘要，要求保留：
+	1、用户透漏的事实（姓名、偏好、背景信息）
+	2、已得出的结论和答案
+	3、未完成的任务和待办
+	用第三人称陈述，控制在300字以内。对话如下：`
+
+func (a *Agent) compressIfNeeded() error {
+	const threshold = 20
+	const keepRecent = 6
+
+	if len(a.messages) <= threshold {
+		return nil
+	}
+
+	split := len(a.messages) - keepRecent
+
+	// 切分点不能在 tool
+	for split < len(a.messages) && a.messages[split].Role == "tool" {
+		split++
+	}
+
+	var sb strings.Builder
+
+	for _, m := range a.messages[1:split] {
+		fmt.Fprintf(&sb, "[%s]:%s\n", m.Role, m.Content)
+
+		for _, tc := range m.ToolCalls {
+			fmt.Fprintf(&sb, "[%s 调用工具]: %s(%s)\n", m.Role, tc.Function.Name, tc.Function.Arguments)
+		}
+	}
+
+	resp, err := a.client.Chat([]llm.Message{
+		{Role: "system", Content: summaryPrompt},
+		{Role: "user", Content: sb.String()},
+	}, nil)
+	if err != nil {
+		return err
+	}
+
+	summary := llm.Message{
+		Role:    "system",
+		Content: "【早期对话摘要】" + resp.Choices[0].Message.Content,
+	}
+	fmt.Println("压缩对话结束，后面的结果：", resp.Choices[0].Message.Content)
+
+	compressed := make([]llm.Message, 0, keepRecent+2)
+	compressed = append(compressed, a.messages[0], summary)
+	compressed = append(compressed, a.messages[split:]...)
+	a.messages = compressed
+	return nil
+}
