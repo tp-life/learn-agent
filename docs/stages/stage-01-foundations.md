@@ -38,12 +38,12 @@ for {
 
 ### 3. messages 四角色协议
 
-| 角色 | 职责 |
-|---|---|
-| system | 立规矩，全会话一条，放最前 |
-| user | 用户输入 |
-| assistant | 模型回复；想调工具时 ToolCalls 非空 |
-| tool | 工具结果，必须用 ToolCallID 回指对应的 assistant 调用 |
+| 角色      | 职责                                                  |
+| --------- | ----------------------------------------------------- |
+| system    | 立规矩，全会话一条，放最前                            |
+| user      | 用户输入                                              |
+| assistant | 模型回复；想调工具时 ToolCalls 非空                   |
+| tool      | 工具结果，必须用 ToolCallID 回指对应的 assistant 调用 |
 
 ### 4. 对话历史就是状态
 
@@ -92,14 +92,14 @@ LLM API 是无状态的——每轮请求都把全部历史重发一遍。agent 
 
 ### 3.2 易混淆概念对比
 
-| 概念 A | 概念 B | 区别要点 |
-|---|---|---|
-| tool_calls（assistant） | role=tool 消息 | 前者是模型发起的调用**请求**，后者是代码执行后回喂的**结果**，靠 ToolCallID 配对 |
-| 流式（SSE） | 非流式 | 流式逐 token 返回、首字延迟低；非流式一次拿全。聚合 tool_calls 分片后两者可对上层同构（本项目 `ChatStream` 与 `Chat` 都返回 `*ChatResponse`） |
-| 无状态 API | 会话状态 | API 本身不记任何历史；多轮对话 = 客户端每轮重发全部 messages |
-| system prompt | user prompt | system 立规矩（优先级高、全程有效），user 是当前任务输入；注入攻击常利用 user 内容篡改指令，敏感规则只放 system |
-| 温度 temperature | top_p | 都控随机性，一般只调一个；agent 场景低 temperature 即可，不必动 top_p |
-| MaxSteps | 超时 | MaxSteps 防"逻辑死循环"（反复调工具），超时防"单次调用卡死"，两者都要 |
+| 概念 A                  | 概念 B         | 区别要点                                                                                                                                      |
+| ----------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| tool_calls（assistant） | role=tool 消息 | 前者是模型发起的调用**请求**，后者是代码执行后回喂的**结果**，靠 ToolCallID 配对                                                              |
+| 流式（SSE）             | 非流式         | 流式逐 token 返回、首字延迟低；非流式一次拿全。聚合 tool_calls 分片后两者可对上层同构（本项目 `ChatStream` 与 `Chat` 都返回 `*ChatResponse`） |
+| 无状态 API              | 会话状态       | API 本身不记任何历史；多轮对话 = 客户端每轮重发全部 messages                                                                                  |
+| system prompt           | user prompt    | system 立规矩（优先级高、全程有效），user 是当前任务输入；注入攻击常利用 user 内容篡改指令，敏感规则只放 system                               |
+| 温度 temperature        | top_p          | 都控随机性，一般只调一个；agent 场景低 temperature 即可，不必动 top_p                                                                         |
+| MaxSteps                | 超时           | MaxSteps 防"逻辑死循环"（反复调工具），超时防"单次调用卡死"，两者都要                                                                         |
 
 ### 3.3 ReAct 循环时序图（一次多步工具调用）
 
@@ -163,16 +163,16 @@ LLM API 是无状态的——每轮请求都把全部历史重发一遍。agent 
 
 ## 六、下一步（练习，按难度排序）
 
-| # | 练习 | 考察点 | 代码位置（TODO 标注处） | 状态 |
-|---|---|---|---|---|
-| 1 | SSE 流式输出：`llm.Client` 加 `ChatStream`（`"stream": true`，解析 `data:` 行，聚合 tool_calls 分片并接入 ReAct 循环） | 面试高频手写题 | `mini-agent/internal/llm/client.go` | ✅（含 tool_calls 扩展） |
-| 2 | 重试与限流：429/5xx 指数退避，最多 3 次 | 生产化基本功 | `mini-agent/internal/llm/client.go` | 🔄 实现已完成（已修正 off-by-one 与 APIError 接线），待运行验收 |
-| 3 | 上下文压缩：messages 超 N 条时先让 LLM 总结早期历史再截断 | 长会话必备 | `mini-agent/internal/agent/agent.go` 末尾 | ⬜ |
-| 4 | 文件读写工具：思考安全边界（限制工作目录、禁绝对路径逃逸） | 工具安全设计 | `mini-agent/internal/tools/tools.go` 末尾 | ⬜ |
+| #   | 练习                                                                                                                   | 考察点         | 代码位置（TODO 标注处）                   | 状态                                                            |
+| --- | ---------------------------------------------------------------------------------------------------------------------- | -------------- | ----------------------------------------- | --------------------------------------------------------------- |
+| 1   | SSE 流式输出：`llm.Client` 加 `ChatStream`（`"stream": true`，解析 `data:` 行，聚合 tool_calls 分片并接入 ReAct 循环） | 面试高频手写题 | `mini-agent/internal/llm/client.go`       | ✅（含 tool_calls 扩展）                                        |
+| 2   | 重试与限流：429/5xx 指数退避，最多 3 次                                                                                | 生产化基本功   | `mini-agent/internal/llm/client.go`       | 🔄 实现已完成（已修正 off-by-one 与 APIError 接线），待运行验收 |
+| 3   | 上下文压缩：messages 超 N 条时先让 LLM 总结早期历史再截断                                                              | 长会话必备     | `mini-agent/internal/agent/agent.go` 末尾 | ⬜                                                              |
+| 4   | 文件读写工具：思考安全边界（限制工作目录、禁绝对路径逃逸）                                                             | 工具安全设计   | `mini-agent/internal/tools/tools.go` 末尾 | ⬜                                                              |
 
 ## 七、进入阶段二前的验收
 
-- [ ] 能手画 ReAct 循环时序图并讲清每条消息的 role（对照 3.3 节）
-- [ ] 能流畅回答 3.1 节全部 10 个考点
+- [x] 能手画 ReAct 循环时序图并讲清每条消息的 role（对照 3.3 节）
+- [x] 能流畅回答 3.1 节全部 10 个考点
 - [x] 完成练习 1（SSE，含 tool_calls 流式聚合扩展）
-- [ ] CLI 能跑通"计算 + 抓网页"的多步工具调用
+- [x] CLI 能跑通"计算 + 抓网页"的多步工具调用

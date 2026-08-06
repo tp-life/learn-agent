@@ -152,11 +152,11 @@ registry.Register(tools.NewWriteFile("./workspace"))
 
 ## 对照清单
 
-- [ ] 读、写两个工具都实现了 Tool 接口并注册
-- [ ] 所有路径经过统一的 resolve/校验函数，拒绝绝对路径
-- [ ] 用 `filepath.Clean` + 前缀判断防 `../` 逃逸
-- [ ] 手动验证 `../../etc/passwd` 被拒绝（必须真的试过）
-- [ ] read_file 有返回长度截断
-- [ ] write_file 的覆盖/建目录语义写进了 Description
-- [ ] 两个工具的 Description 写清了各自的使用时机（读用谁、写用谁）
-- [ ] 端到端验证：agent 能完成"把计算结果写入文件再读回来"
+- [x] 读、写两个工具都实现了 Tool 接口并注册
+- [x] 所有路径经过统一的 resolve/校验函数，拒绝绝对路径
+- [x] 用 `filepath.Clean` + 前缀判断防 `../` 逃逸
+- [x] 手动验证 `../../etc/passwd` 被拒绝（必须真的试过）
+- [x] read_file 有返回长度截断
+- [x] write_file 的覆盖/建目录语义写进了 Description
+- [x] 两个工具的 Description 写清了各自的使用时机（读用谁、写用谁）
+- [x] 端到端验证：agent 能完成"把计算结果写入文件再读回来"

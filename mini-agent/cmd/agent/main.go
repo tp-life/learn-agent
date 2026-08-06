@@ -32,6 +32,8 @@ func main() {
 	registry := tools.NewRegistry()
 	registry.Register(tools.Calculator{})
 	registry.Register(tools.HTTPFetch{})
+	registry.Register(tools.NewReadFile("./workspace"))
+	registry.Register(tools.NewWriteFile("./workspace"))
 
 	client := llm.NewClient(apiKey)
 
