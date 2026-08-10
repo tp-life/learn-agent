@@ -12,6 +12,10 @@
 // 后面的 prompt 工程做得再好也救不回来。
 package rag
 
+import (
+	"strings"
+)
+
 // ChunkOptions 是文档切块的调参入口。
 //
 // MaxChars 是 RAG 的第一调参位（面试高频：chunk 切多大？）：
@@ -71,5 +75,92 @@ func DefaultChunkOptions() ChunkOptions {
 //
 // 参考答案：docs/solutions/stage-02/exercise-3-chunking.md（完成后再看）
 func Chunk(text string, opts ChunkOptions) []string {
-	return nil // TODO 未实现：见上方 TODO(练习3) 块
+	opts = normalizeChunkOptions(opts)
+
+	var chunks []string
+	var cur []string
+	curLen := 0
+
+	flush := func() {
+		if len(cur) == 0 {
+			return
+		}
+
+		chunks = append(chunks, strings.Join(cur, "\n\n"))
+		cur = nil
+		curLen = 0
+	}
+
+	for _, para := range splitParagraphs(text) {
+		paraLen := len([]rune(para))
+		if len(para) > opts.MaxChars {
+			flush()
+			chunks = append(chunks, hardCut(para, opts)...)
+			continue
+		}
+		addLen := paraLen
+		if len(cur) > 0 {
+			addLen += 2
+		}
+
+		if curLen+addLen > opts.MaxChars {
+			flush()
+		}
+
+		if len(cur) == 0 {
+			curLen = paraLen
+		} else {
+			curLen += 2 + paraLen
+		}
+
+		cur = append(cur, para)
+
+	}
+	flush()
+	return chunks
+}
+
+func normalizeChunkOptions(opts ChunkOptions) ChunkOptions {
+	if opts.MaxChars <= 0 {
+		opts = DefaultChunkOptions()
+	}
+
+	if opts.OverlapChars < 0 {
+		opts.OverlapChars = 0
+	}
+
+	if opts.OverlapChars >= opts.MaxChars {
+		opts.OverlapChars = opts.MaxChars - 1
+	}
+	return opts
+}
+
+func splitParagraphs(text string) []string {
+	var paras []string
+
+	for _, p := range strings.Split(text, "\n\n") {
+		if p = strings.TrimSpace(p); p != "" {
+			paras = append(paras, p)
+		}
+	}
+	return paras
+}
+
+func hardCut(para string, opts ChunkOptions) []string {
+	runes := []rune(para)
+	step := opts.MaxChars - opts.OverlapChars
+	var out []string
+
+	for start := 0; start < len(runes); start += step {
+		end := start + opts.MaxChars
+
+		if end > len(runes) {
+			end = len(runes)
+		}
+		out = append(out, string(runes[start:end]))
+		if end == len(runes) {
+			break
+		}
+	}
+	return out
 }

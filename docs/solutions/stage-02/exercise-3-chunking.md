@@ -27,95 +27,95 @@ import "strings"
 // 全程按 rune 而非 byte 计量——中文一个字符占 3 个 byte，
 // 按 byte 切会把汉字劈成乱码。
 func Chunk(text string, opts ChunkOptions) []string {
-	opts = normalizeChunkOptions(opts)
+ opts = normalizeChunkOptions(opts)
 
-	var chunks []string
-	var cur []string // 当前块已打包的段落
-	curLen := 0      // 当前块的 rune 数（含段落间 "\n\n" 分隔符）
+ var chunks []string
+ var cur []string // 当前块已打包的段落
+ curLen := 0      // 当前块的 rune 数（含段落间 "\n\n" 分隔符）
 
-	// flush 封存当前块。闭包捕获 cur/curLen/chunks，注意它同时重置前两者。
-	flush := func() {
-		if len(cur) == 0 {
-			return
-		}
-		chunks = append(chunks, strings.Join(cur, "\n\n"))
-		cur = nil
-		curLen = 0
-	}
+ // flush 封存当前块。闭包捕获 cur/curLen/chunks，注意它同时重置前两者。
+ flush := func() {
+  if len(cur) == 0 {
+   return
+  }
+  chunks = append(chunks, strings.Join(cur, "\n\n"))
+  cur = nil
+  curLen = 0
+ }
 
-	for _, para := range splitParagraphs(text) {
-		paraLen := len([]rune(para))
-		if paraLen > opts.MaxChars {
-			// 超长段落：先封存当前块（保持段落顺序），再对该段硬切。
-			flush()
-			chunks = append(chunks, hardCut(para, opts)...)
-			continue
-		}
-		addLen := paraLen
-		if len(cur) > 0 {
-			addLen += 2 // 段落间分隔符 "\n\n" 也占块内额度
-		}
-		if curLen+addLen > opts.MaxChars {
-			flush() // 当前块放不下，封存后开新块
-		}
-		if len(cur) == 0 {
-			curLen = paraLen
-		} else {
-			curLen += 2 + paraLen
-		}
-		cur = append(cur, para)
-	}
-	flush()
+ for _, para := range splitParagraphs(text) {
+  paraLen := len([]rune(para))
+  if paraLen > opts.MaxChars {
+   // 超长段落：先封存当前块（保持段落顺序），再对该段硬切。
+   flush()
+   chunks = append(chunks, hardCut(para, opts)...)
+   continue
+  }
+  addLen := paraLen
+  if len(cur) > 0 {
+   addLen += 2 // 段落间分隔符 "\n\n" 也占块内额度
+  }
+  if curLen+addLen > opts.MaxChars {
+   flush() // 当前块放不下，封存后开新块
+  }
+  if len(cur) == 0 {
+   curLen = paraLen
+  } else {
+   curLen += 2 + paraLen
+  }
+  cur = append(cur, para)
+ }
+ flush()
 
-	return chunks
+ return chunks
 }
 
 // normalizeChunkOptions 防御异常参数，保证硬切循环一定收敛：
 // MaxChars <= 0 用默认值兜底；OverlapChars 必须落在 [0, MaxChars-1]，
 // 否则步长 MaxChars-OverlapChars 为 0 或负数，for 循环永不前进（死循环）。
 func normalizeChunkOptions(opts ChunkOptions) ChunkOptions {
-	if opts.MaxChars <= 0 {
-		opts = DefaultChunkOptions()
-	}
-	if opts.OverlapChars < 0 {
-		opts.OverlapChars = 0
-	}
-	if opts.OverlapChars >= opts.MaxChars {
-		opts.OverlapChars = opts.MaxChars - 1
-	}
-	return opts
+ if opts.MaxChars <= 0 {
+  opts = DefaultChunkOptions()
+ }
+ if opts.OverlapChars < 0 {
+  opts.OverlapChars = 0
+ }
+ if opts.OverlapChars >= opts.MaxChars {
+  opts.OverlapChars = opts.MaxChars - 1
+ }
+ return opts
 }
 
 // splitParagraphs 按空行切段，TrimSpace 后丢弃空段——空段没有语义，
 // 留着只会产出让 embedding 白跑一次的空块。
 func splitParagraphs(text string) []string {
-	var paras []string
-	for _, p := range strings.Split(text, "\n\n") {
-		if p = strings.TrimSpace(p); p != "" {
-			paras = append(paras, p)
-		}
-	}
-	return paras
+ var paras []string
+ for _, p := range strings.Split(text, "\n\n") {
+  if p = strings.TrimSpace(p); p != "" {
+   paras = append(paras, p)
+  }
+ }
+ return paras
 }
 
 // hardCut 对超长段落做固定窗口切分：每块最多 MaxChars 个 rune，
 // 相邻块重叠 OverlapChars 个 rune（步长 = MaxChars - OverlapChars）。
 // 参数已经过 normalizeChunkOptions 钳制，step 必然 >= 1。
 func hardCut(para string, opts ChunkOptions) []string {
-	runes := []rune(para)
-	step := opts.MaxChars - opts.OverlapChars
-	var out []string
-	for start := 0; start < len(runes); start += step {
-		end := start + opts.MaxChars
-		if end > len(runes) {
-			end = len(runes)
-		}
-		out = append(out, string(runes[start:end]))
-		if end == len(runes) {
-			break // 末尾块通常不足 MaxChars，与上一块的重叠会超过 OverlapChars，属正常
-		}
-	}
-	return out
+ runes := []rune(para)
+ step := opts.MaxChars - opts.OverlapChars
+ var out []string
+ for start := 0; start < len(runes); start += step {
+  end := start + opts.MaxChars
+  if end > len(runes) {
+   end = len(runes)
+  }
+  out = append(out, string(runes[start:end]))
+  if end == len(runes) {
+   break // 末尾块通常不足 MaxChars，与上一块的重叠会超过 OverlapChars，属正常
+  }
+ }
+ return out
 }
 ```
 
@@ -125,10 +125,10 @@ func hardCut(para string, opts ChunkOptions) []string {
 package rag
 
 import (
-	"strings"
-	"testing"
-	"time"
-	"unicode/utf8"
+ "strings"
+ "testing"
+ "time"
+ "unicode/utf8"
 )
 
 // runeLen 是测试用的简写：本练习的核心纪律就是"按 rune 不按 byte"。
@@ -137,38 +137,38 @@ func runeLen(s string) int { return utf8.RuneCountInString(s) }
 // TestChunk_PacksParagraphs 验证结构优先：多段能装进一个块时原样打包，
 // 段落不被拆散，分隔符保留。
 func TestChunk_PacksParagraphs(t *testing.T) {
-	paras := []string{"第一段：甲乙丙丁", "第二段：戊己庚辛", "第三段：壬癸"}
-	text := strings.Join(paras, "\n\n")
+ paras := []string{"第一段：甲乙丙丁", "第二段：戊己庚辛", "第三段：壬癸"}
+ text := strings.Join(paras, "\n\n")
 
-	chunks := Chunk(text, ChunkOptions{MaxChars: 100, OverlapChars: 10})
-	if len(chunks) != 1 {
-		t.Fatalf("len(chunks) = %d, want 1（三段应打包进同一块）", len(chunks))
-	}
-	if chunks[0] != text {
-		t.Errorf("chunk 内容被改动：got %q, want %q", chunks[0], text)
-	}
+ chunks := Chunk(text, ChunkOptions{MaxChars: 100, OverlapChars: 10})
+ if len(chunks) != 1 {
+  t.Fatalf("len(chunks) = %d, want 1（三段应打包进同一块）", len(chunks))
+ }
+ if chunks[0] != text {
+  t.Errorf("chunk 内容被改动：got %q, want %q", chunks[0], text)
+ }
 }
 
 // TestChunk_PackingRespectsMaxChars 验证贪心打包的上限纪律：
 // 两个 60 rune 的段落装不进 100 的块（60+2+60=122），必须分成两块，
 // 且段落保持完整、每块都不超限。
 func TestChunk_PackingRespectsMaxChars(t *testing.T) {
-	p1 := strings.Repeat("甲", 60)
-	p2 := strings.Repeat("乙", 60)
-	text := p1 + "\n\n" + p2
+ p1 := strings.Repeat("甲", 60)
+ p2 := strings.Repeat("乙", 60)
+ text := p1 + "\n\n" + p2
 
-	chunks := Chunk(text, ChunkOptions{MaxChars: 100, OverlapChars: 10})
-	if len(chunks) != 2 {
-		t.Fatalf("len(chunks) = %d, want 2", len(chunks))
-	}
-	if chunks[0] != p1 || chunks[1] != p2 {
-		t.Errorf("段落被拆散或改序：got %q", chunks)
-	}
-	for i, c := range chunks {
-		if runeLen(c) > 100 {
-			t.Errorf("chunks[%d] = %d rune，超过 MaxChars=100", i, runeLen(c))
-		}
-	}
+ chunks := Chunk(text, ChunkOptions{MaxChars: 100, OverlapChars: 10})
+ if len(chunks) != 2 {
+  t.Fatalf("len(chunks) = %d, want 2", len(chunks))
+ }
+ if chunks[0] != p1 || chunks[1] != p2 {
+  t.Errorf("段落被拆散或改序：got %q", chunks)
+ }
+ for i, c := range chunks {
+  if runeLen(c) > 100 {
+   t.Errorf("chunks[%d] = %d rune，超过 MaxChars=100", i, runeLen(c))
+  }
+ }
 }
 
 // TestChunk_HardCutWithOverlap 验证超长段硬切：
@@ -176,118 +176,118 @@ func TestChunk_PackingRespectsMaxChars(t *testing.T) {
 // 起点 0/70/140/210，共 4 块；相邻块恰好重叠 30 个 rune；
 // 去掉重叠拼接后必须还原原文（内容全覆盖）。
 func TestChunk_HardCutWithOverlap(t *testing.T) {
-	para := strings.Repeat("a", 250)
-	opts := ChunkOptions{MaxChars: 100, OverlapChars: 30}
+ para := strings.Repeat("a", 250)
+ opts := ChunkOptions{MaxChars: 100, OverlapChars: 30}
 
-	chunks := Chunk(para, opts)
-	if len(chunks) != 4 {
-		t.Fatalf("len(chunks) = %d, want 4", len(chunks))
-	}
-	for i, c := range chunks {
-		if runeLen(c) > opts.MaxChars {
-			t.Errorf("chunks[%d] = %d rune，超过 MaxChars=%d", i, runeLen(c), opts.MaxChars)
-		}
-	}
-	// 相邻块：前块末尾 OverlapChars 个 rune == 后块开头 OverlapChars 个 rune。
-	for i := 0; i+1 < len(chunks); i++ {
-		cur, next := []rune(chunks[i]), []rune(chunks[i+1])
-		ov := opts.OverlapChars
-		if string(cur[len(cur)-ov:]) != string(next[:ov]) {
-			t.Errorf("chunks[%d] 与 chunks[%d] 之间重叠不正确", i, i+1)
-		}
-	}
-	// 覆盖校验：首块 + 后续块各去掉前 OverlapChars 个重叠 rune，拼回应等于原文。
-	var sb strings.Builder
-	sb.WriteString(chunks[0])
-	for _, c := range chunks[1:] {
-		sb.WriteString(string([]rune(c)[opts.OverlapChars:]))
-	}
-	if sb.String() != para {
-		t.Errorf("去重叠拼接后 = %d rune，与原文不一致（内容未全覆盖）", runeLen(sb.String()))
-	}
+ chunks := Chunk(para, opts)
+ if len(chunks) != 4 {
+  t.Fatalf("len(chunks) = %d, want 4", len(chunks))
+ }
+ for i, c := range chunks {
+  if runeLen(c) > opts.MaxChars {
+   t.Errorf("chunks[%d] = %d rune，超过 MaxChars=%d", i, runeLen(c), opts.MaxChars)
+  }
+ }
+ // 相邻块：前块末尾 OverlapChars 个 rune == 后块开头 OverlapChars 个 rune。
+ for i := 0; i+1 < len(chunks); i++ {
+  cur, next := []rune(chunks[i]), []rune(chunks[i+1])
+  ov := opts.OverlapChars
+  if string(cur[len(cur)-ov:]) != string(next[:ov]) {
+   t.Errorf("chunks[%d] 与 chunks[%d] 之间重叠不正确", i, i+1)
+  }
+ }
+ // 覆盖校验：首块 + 后续块各去掉前 OverlapChars 个重叠 rune，拼回应等于原文。
+ var sb strings.Builder
+ sb.WriteString(chunks[0])
+ for _, c := range chunks[1:] {
+  sb.WriteString(string([]rune(c)[opts.OverlapChars:]))
+ }
+ if sb.String() != para {
+  t.Errorf("去重叠拼接后 = %d rune，与原文不一致（内容未全覆盖）", runeLen(sb.String()))
+ }
 }
 
 // TestChunk_ChineseNoMojibake 验证最核心的坑：中文硬切不产生乱码。
 // "人工智能" 每个汉字 3 byte，若实现按 byte 切，这里必挂。
 func TestChunk_ChineseNoMojibake(t *testing.T) {
-	para := strings.Repeat("人工智能", 40) // 160 rune = 480 byte
-	opts := ChunkOptions{MaxChars: 50, OverlapChars: 10}
+ para := strings.Repeat("人工智能", 40) // 160 rune = 480 byte
+ opts := ChunkOptions{MaxChars: 50, OverlapChars: 10}
 
-	chunks := Chunk(para, opts)
-	if len(chunks) == 0 {
-		t.Fatal("no chunks")
-	}
-	for i, c := range chunks {
-		if !utf8.ValidString(c) {
-			t.Fatalf("chunks[%d] 不是合法 UTF-8（按 byte 切产生了乱码）", i)
-		}
-		if runeLen(c) > opts.MaxChars {
-			t.Errorf("chunks[%d] = %d rune，超过 MaxChars=%d", i, runeLen(c), opts.MaxChars)
-		}
-	}
-	// 覆盖校验：拼接去重叠后还原 160 个汉字。
-	var sb strings.Builder
-	sb.WriteString(chunks[0])
-	for _, c := range chunks[1:] {
-		r := []rune(c)
-		// 末尾块与上一块的重叠可能超过 OverlapChars，按实际起点对齐：
-		// 这里步长 = 50-10 = 40，每块贡献 40 个新 rune，末尾块贡献其剩余部分。
-		overlap := opts.OverlapChars
-		if len(r) < overlap {
-			overlap = len(r)
-		}
-		sb.WriteString(string(r[overlap:]))
-	}
-	if sb.String() != para {
-		t.Errorf("中文文本去重叠拼接后与原文不一致：got %d rune, want %d", runeLen(sb.String()), runeLen(para))
-	}
+ chunks := Chunk(para, opts)
+ if len(chunks) == 0 {
+  t.Fatal("no chunks")
+ }
+ for i, c := range chunks {
+  if !utf8.ValidString(c) {
+   t.Fatalf("chunks[%d] 不是合法 UTF-8（按 byte 切产生了乱码）", i)
+  }
+  if runeLen(c) > opts.MaxChars {
+   t.Errorf("chunks[%d] = %d rune，超过 MaxChars=%d", i, runeLen(c), opts.MaxChars)
+  }
+ }
+ // 覆盖校验：拼接去重叠后还原 160 个汉字。
+ var sb strings.Builder
+ sb.WriteString(chunks[0])
+ for _, c := range chunks[1:] {
+  r := []rune(c)
+  // 末尾块与上一块的重叠可能超过 OverlapChars，按实际起点对齐：
+  // 这里步长 = 50-10 = 40，每块贡献 40 个新 rune，末尾块贡献其剩余部分。
+  overlap := opts.OverlapChars
+  if len(r) < overlap {
+   overlap = len(r)
+  }
+  sb.WriteString(string(r[overlap:]))
+ }
+ if sb.String() != para {
+  t.Errorf("中文文本去重叠拼接后与原文不一致：got %d rune, want %d", runeLen(sb.String()), runeLen(para))
+ }
 }
 
 // TestChunk_EmptyAndBlankInput 验证空输入、全空白输入都返回 nil（不产空块）。
 func TestChunk_EmptyAndBlankInput(t *testing.T) {
-	if got := Chunk("", DefaultChunkOptions()); got != nil {
-		t.Errorf(`Chunk("") = %v, want nil`, got)
-	}
-	if got := Chunk("  \n\n\t \n\n  ", DefaultChunkOptions()); got != nil {
-		t.Errorf(`Chunk(全空白) = %v, want nil`, got)
-	}
+ if got := Chunk("", DefaultChunkOptions()); got != nil {
+  t.Errorf(`Chunk("") = %v, want nil`, got)
+ }
+ if got := Chunk("  \n\n\t \n\n  ", DefaultChunkOptions()); got != nil {
+  t.Errorf(`Chunk(全空白) = %v, want nil`, got)
+ }
 }
 
 // TestChunk_OverlapClampedNoDeadLoop 验证防御：OverlapChars >= MaxChars 时
 // 步长被钳制为 >= 1，硬切不死循环。用 goroutine + 超时探测死循环。
 func TestChunk_OverlapClampedNoDeadLoop(t *testing.T) {
-	para := strings.Repeat("x", 120)
-	done := make(chan []string, 1)
-	go func() {
-		done <- Chunk(para, ChunkOptions{MaxChars: 50, OverlapChars: 50})
-	}()
-	select {
-	case chunks := <-done:
-		if len(chunks) == 0 {
-			t.Error("overlap 被钳制后仍应产出块")
-		}
-		for i, c := range chunks {
-			if runeLen(c) > 50 {
-				t.Errorf("chunks[%d] = %d rune，超过 MaxChars=50", i, runeLen(c))
-			}
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("2 秒未返回：OverlapChars >= MaxChars 导致死循环")
-	}
+ para := strings.Repeat("x", 120)
+ done := make(chan []string, 1)
+ go func() {
+  done <- Chunk(para, ChunkOptions{MaxChars: 50, OverlapChars: 50})
+ }()
+ select {
+ case chunks := <-done:
+  if len(chunks) == 0 {
+   t.Error("overlap 被钳制后仍应产出块")
+  }
+  for i, c := range chunks {
+   if runeLen(c) > 50 {
+    t.Errorf("chunks[%d] = %d rune，超过 MaxChars=50", i, runeLen(c))
+   }
+  }
+ case <-time.After(2 * time.Second):
+  t.Fatal("2 秒未返回：OverlapChars >= MaxChars 导致死循环")
+ }
 }
 
 // TestChunk_ZeroOptsUsesDefault 验证零值 opts 用默认值兜底，且正常切块。
 func TestChunk_ZeroOptsUsesDefault(t *testing.T) {
-	para := strings.Repeat("哈", 1000) // 1000 rune > 默认 400，必然触发硬切
-	chunks := Chunk(para, ChunkOptions{})
-	if len(chunks) < 2 {
-		t.Fatalf("len(chunks) = %d, want >= 2（默认 MaxChars=400 应切多块）", len(chunks))
-	}
-	for i, c := range chunks {
-		if runeLen(c) > 400 {
-			t.Errorf("chunks[%d] = %d rune，超过默认 MaxChars=400", i, runeLen(c))
-		}
-	}
+ para := strings.Repeat("哈", 1000) // 1000 rune > 默认 400，必然触发硬切
+ chunks := Chunk(para, ChunkOptions{})
+ if len(chunks) < 2 {
+  t.Fatalf("len(chunks) = %d, want >= 2（默认 MaxChars=400 应切多块）", len(chunks))
+ }
+ for i, c := range chunks {
+  if runeLen(c) > 400 {
+   t.Errorf("chunks[%d] = %d rune，超过默认 MaxChars=400", i, runeLen(c))
+  }
+ }
 }
 ```
 
@@ -321,8 +321,8 @@ import 需要在基础版的 `strings` 之上再加 `unicode`：
 
 ```go
 import (
-	"strings"
-	"unicode"
+ "strings"
+ "unicode"
 )
 ```
 
@@ -334,46 +334,46 @@ import (
 //（hardCutBoundary）。段落打包路径与 Chunk 逐行一致——未触发超限时
 // 两个函数输出完全相同（有测试保证）。
 func ChunkRefined(text string, opts ChunkOptions) []string {
-	opts = normalizeChunkOptions(opts)
+ opts = normalizeChunkOptions(opts)
 
-	var chunks []string
-	var cur []string
-	curLen := 0
+ var chunks []string
+ var cur []string
+ curLen := 0
 
-	flush := func() {
-		if len(cur) == 0 {
-			return
-		}
-		chunks = append(chunks, strings.Join(cur, "\n\n"))
-		cur = nil
-		curLen = 0
-	}
+ flush := func() {
+  if len(cur) == 0 {
+   return
+  }
+  chunks = append(chunks, strings.Join(cur, "\n\n"))
+  cur = nil
+  curLen = 0
+ }
 
-	for _, para := range splitParagraphs(text) {
-		if len([]rune(para)) > opts.MaxChars {
-			// 超长段落：先封存当前块（保持顺序），再做句级二级拆分。
-			flush()
-			chunks = append(chunks, chunkSentences(para, opts)...)
-			continue
-		}
-		paraLen := len([]rune(para))
-		addLen := paraLen
-		if len(cur) > 0 {
-			addLen += 2
-		}
-		if curLen+addLen > opts.MaxChars {
-			flush()
-		}
-		if len(cur) == 0 {
-			curLen = paraLen
-		} else {
-			curLen += 2 + paraLen
-		}
-		cur = append(cur, para)
-	}
-	flush()
+ for _, para := range splitParagraphs(text) {
+  if len([]rune(para)) > opts.MaxChars {
+   // 超长段落：先封存当前块（保持顺序），再做句级二级拆分。
+   flush()
+   chunks = append(chunks, chunkSentences(para, opts)...)
+   continue
+  }
+  paraLen := len([]rune(para))
+  addLen := paraLen
+  if len(cur) > 0 {
+   addLen += 2
+  }
+  if curLen+addLen > opts.MaxChars {
+   flush()
+  }
+  if len(cur) == 0 {
+   curLen = paraLen
+  } else {
+   curLen += 2 + paraLen
+  }
+  cur = append(cur, para)
+ }
+ flush()
 
-	return chunks
+ return chunks
 }
 
 // chunkSentences 把超长段落按句拆分后贪心打包；单句仍超限才边界感知硬切。
@@ -384,34 +384,34 @@ func ChunkRefined(text string, opts ChunkOptions) []string {
 //   - 句级块之间不加重叠——句子是完整的语义单元，块边界落在句子上时重叠的收益
 //     很小；重叠留给"句内被劈开"的硬切路径。
 func chunkSentences(para string, opts ChunkOptions) []string {
-	var out []string
-	var cur []string
-	curLen := 0
+ var out []string
+ var cur []string
+ curLen := 0
 
-	flush := func() {
-		if len(cur) == 0 {
-			return
-		}
-		out = append(out, strings.Join(cur, ""))
-		cur = nil
-		curLen = 0
-	}
+ flush := func() {
+  if len(cur) == 0 {
+   return
+  }
+  out = append(out, strings.Join(cur, ""))
+  cur = nil
+  curLen = 0
+ }
 
-	for _, sent := range splitSentences(para) {
-		sentLen := len([]rune(sent))
-		if sentLen > opts.MaxChars {
-			flush()
-			out = append(out, hardCutBoundary(sent, opts)...)
-			continue
-		}
-		if curLen+sentLen > opts.MaxChars {
-			flush()
-		}
-		cur = append(cur, sent)
-		curLen += sentLen
-	}
-	flush()
-	return out
+ for _, sent := range splitSentences(para) {
+  sentLen := len([]rune(sent))
+  if sentLen > opts.MaxChars {
+   flush()
+   out = append(out, hardCutBoundary(sent, opts)...)
+   continue
+  }
+  if curLen+sentLen > opts.MaxChars {
+   flush()
+  }
+  cur = append(cur, sent)
+  curLen += sentLen
+ }
+ flush()
+ return out
 }
 
 // splitSentences 按句末标点（。！？!?）和换行拆句，分隔符保留在句尾。
@@ -421,34 +421,34 @@ func chunkSentences(para string, opts ChunkOptions) []string {
 // ——句间空格丢失，覆盖性不变量被破坏。原样保留保证 strings.Join(sents, "")
 // 无损还原原文。
 func splitSentences(para string) []string {
-	var sents []string
-	start := 0
-	runes := []rune(para)
-	for i, r := range runes {
-		if isSentenceEnd(r) {
-			sents = appendSent(sents, runes[start:i+1])
-			start = i + 1
-		}
-	}
-	if start < len(runes) {
-		sents = appendSent(sents, runes[start:])
-	}
-	return sents
+ var sents []string
+ start := 0
+ runes := []rune(para)
+ for i, r := range runes {
+  if isSentenceEnd(r) {
+   sents = appendSent(sents, runes[start:i+1])
+   start = i + 1
+  }
+ }
+ if start < len(runes) {
+  sents = appendSent(sents, runes[start:])
+ }
+ return sents
 }
 
 func appendSent(sents []string, r []rune) []string {
-	if strings.TrimSpace(string(r)) == "" {
-		return sents
-	}
-	return append(sents, string(r))
+ if strings.TrimSpace(string(r)) == "" {
+  return sents
+ }
+ return append(sents, string(r))
 }
 
 func isSentenceEnd(r rune) bool {
-	switch r {
-	case '。', '！', '？', '!', '?', '\n':
-		return true
-	}
-	return false
+ switch r {
+ case '。', '！', '？', '!', '?', '\n':
+  return true
+ }
+ return false
 }
 
 // hardCutBoundary 边界感知的硬切：窗口右端向左回退到最近的空白/标点处下刀。
@@ -462,40 +462,40 @@ func isSentenceEnd(r rune) bool {
 //     极端情况下（cut 距 start 比 OverlapChars 还近）可能把 next 拉回 start
 //     之前造成死循环，钳制到 cut 兜底：宁可丢重叠，不可死循环。
 func hardCutBoundary(s string, opts ChunkOptions) []string {
-	runes := []rune(s)
-	var out []string
-	for start := 0; start < len(runes); {
-		end := start + opts.MaxChars
-		if end >= len(runes) {
-			out = append(out, string(runes[start:]))
-			break
-		}
-		cut := end
-		floor := start + opts.MaxChars/2
-		for i := end - 1; i > floor; i-- {
-			if isBreakRune(runes[i]) {
-				cut = i + 1 // 在空白/标点之后下刀，标点留在当前块内
-				break
-			}
-		}
-		out = append(out, string(runes[start:cut]))
-		next := cut - opts.OverlapChars
-		if next <= start {
-			next = cut
-		}
-		start = next
-	}
-	return out
+ runes := []rune(s)
+ var out []string
+ for start := 0; start < len(runes); {
+  end := start + opts.MaxChars
+  if end >= len(runes) {
+   out = append(out, string(runes[start:]))
+   break
+  }
+  cut := end
+  floor := start + opts.MaxChars/2
+  for i := end - 1; i > floor; i-- {
+   if isBreakRune(runes[i]) {
+    cut = i + 1 // 在空白/标点之后下刀，标点留在当前块内
+    break
+   }
+  }
+  out = append(out, string(runes[start:cut]))
+  next := cut - opts.OverlapChars
+  if next <= start {
+   next = cut
+  }
+  start = next
+ }
+ return out
 }
 
 // isBreakRune 判断是否可以在此 rune 之后下刀：任意空白（unicode.IsSpace 覆盖
 // 空格/换行/制表符）或中英文标点。英文靠空格保护单词完整性，中文没有空格，
 // 退到标点（，。；等）后面切，比随机位置切断语义损伤小。
 func isBreakRune(r rune) bool {
-	if unicode.IsSpace(r) {
-		return true
-	}
-	return strings.ContainsRune("，。！？；：、,.!?;:—…", r)
+ if unicode.IsSpace(r) {
+  return true
+ }
+ return strings.ContainsRune("，。！？；：、,.!?;:—…", r)
 }
 ```
 
@@ -505,172 +505,172 @@ func isBreakRune(r rune) bool {
 // TestChunkRefined_SentenceBoundary 验证句级二级拆分：
 // 超长段落按句打包，每个块的边界都落在句末标点/换行上，句子不被拦腰切断。
 func TestChunkRefined_SentenceBoundary(t *testing.T) {
-	// 8 个 30 rune 的句子（29 字 + "。"），段落共 240 rune > MaxChars=100
-	var sb strings.Builder
-	for i := 0; i < 8; i++ {
-		sb.WriteString(strings.Repeat(string(rune('甲'+i)), 29))
-		sb.WriteString("。")
-	}
-	para := sb.String()
-	opts := ChunkOptions{MaxChars: 100, OverlapChars: 20}
+ // 8 个 30 rune 的句子（29 字 + "。"），段落共 240 rune > MaxChars=100
+ var sb strings.Builder
+ for i := 0; i < 8; i++ {
+  sb.WriteString(strings.Repeat(string(rune('甲'+i)), 29))
+  sb.WriteString("。")
+ }
+ para := sb.String()
+ opts := ChunkOptions{MaxChars: 100, OverlapChars: 20}
 
-	chunks := ChunkRefined(para, opts)
-	if len(chunks) < 2 {
-		t.Fatalf("len(chunks) = %d, want >= 2", len(chunks))
-	}
-	for i, c := range chunks {
-		if runeLen(c) > opts.MaxChars {
-			t.Errorf("chunks[%d] = %d rune，超过 MaxChars=%d", i, runeLen(c), opts.MaxChars)
-		}
-		// 句级打包（无重叠），每块必须以句末标点结尾 = 句子不被劈开
-		if !strings.HasSuffix(c, "。") {
-			t.Errorf("chunks[%d] 未落在句子边界上：尾部 %q", i, string([]rune(c)[runeLen(c)-5:]))
-		}
-	}
-	// 句级路径无重叠，直接拼接必须还原原文（内容全覆盖）
-	if got := strings.Join(chunks, ""); got != para {
-		t.Errorf("句级切块拼接后与原文不一致：got %d rune, want %d", runeLen(got), runeLen(para))
-	}
+ chunks := ChunkRefined(para, opts)
+ if len(chunks) < 2 {
+  t.Fatalf("len(chunks) = %d, want >= 2", len(chunks))
+ }
+ for i, c := range chunks {
+  if runeLen(c) > opts.MaxChars {
+   t.Errorf("chunks[%d] = %d rune，超过 MaxChars=%d", i, runeLen(c), opts.MaxChars)
+  }
+  // 句级打包（无重叠），每块必须以句末标点结尾 = 句子不被劈开
+  if !strings.HasSuffix(c, "。") {
+   t.Errorf("chunks[%d] 未落在句子边界上：尾部 %q", i, string([]rune(c)[runeLen(c)-5:]))
+  }
+ }
+ // 句级路径无重叠，直接拼接必须还原原文（内容全覆盖）
+ if got := strings.Join(chunks, ""); got != para {
+  t.Errorf("句级切块拼接后与原文不一致：got %d rune, want %d", runeLen(got), runeLen(para))
+ }
 }
 
 // TestChunkRefined_EnglishWordNotSplit 验证词边界回退：
 // 单句超长（无句末标点）时走边界感知硬切，英文单词不被劈开；
 // 同时与基础版 hardCut 对比，证明基础版确实会劈单词。
 func TestChunkRefined_EnglishWordNotSplit(t *testing.T) {
-	// "abcdefg " 8 rune 一组，重复 40 次 = 320 rune，单句（无标点）超 MaxChars=100。
-	// 窗口右端 100 落在第 13 个词的中间（96..103 是 "abcdefg "），
-	// 基础版硬切得到 "abcd|efg"，进阶版应回退到 96（空格后）下刀。
-	// 注意：段落入口的 TrimSpace 会去掉尾部空格，实际参与切块的是 319 rune。
-	para := strings.TrimSpace(strings.Repeat("abcdefg ", 40))
-	opts := ChunkOptions{MaxChars: 100, OverlapChars: 20}
+ // "abcdefg " 8 rune 一组，重复 40 次 = 320 rune，单句（无标点）超 MaxChars=100。
+ // 窗口右端 100 落在第 13 个词的中间（96..103 是 "abcdefg "），
+ // 基础版硬切得到 "abcd|efg"，进阶版应回退到 96（空格后）下刀。
+ // 注意：段落入口的 TrimSpace 会去掉尾部空格，实际参与切块的是 319 rune。
+ para := strings.TrimSpace(strings.Repeat("abcdefg ", 40))
+ opts := ChunkOptions{MaxChars: 100, OverlapChars: 20}
 
-	refined := ChunkRefined(para, opts)
-	if len(refined) < 2 {
-		t.Fatalf("len(chunks) = %d, want >= 2", len(refined))
-	}
-	for i, c := range refined {
-		if runeLen(c) > opts.MaxChars {
-			t.Errorf("chunks[%d] = %d rune，超过 MaxChars=%d", i, runeLen(c), opts.MaxChars)
-		}
-		// 非末尾块必须切在空白/标点后（不劈单词）；末尾块终于文本结尾，豁免
-		if i < len(refined)-1 && !endsAtBreakRune(c) {
-			t.Errorf("chunks[%d] 末尾劈开了单词：尾部 %q", i, string([]rune(c)[max(0, runeLen(c)-6):]))
-		}
-	}
-	if runeLen(refined[0]) != 96 {
-		t.Errorf("首块 = %d rune，want 96（应回退到空格处下刀）", runeLen(refined[0]))
-	}
+ refined := ChunkRefined(para, opts)
+ if len(refined) < 2 {
+  t.Fatalf("len(chunks) = %d, want >= 2", len(refined))
+ }
+ for i, c := range refined {
+  if runeLen(c) > opts.MaxChars {
+   t.Errorf("chunks[%d] = %d rune，超过 MaxChars=%d", i, runeLen(c), opts.MaxChars)
+  }
+  // 非末尾块必须切在空白/标点后（不劈单词）；末尾块终于文本结尾，豁免
+  if i < len(refined)-1 && !endsAtBreakRune(c) {
+   t.Errorf("chunks[%d] 末尾劈开了单词：尾部 %q", i, string([]rune(c)[max(0, runeLen(c)-6):]))
+  }
+ }
+ if runeLen(refined[0]) != 96 {
+  t.Errorf("首块 = %d rune，want 96（应回退到空格处下刀）", runeLen(refined[0]))
+ }
 
-	// 对比：基础版硬切在同一文本上的首块恰好 100 rune，且以 "abcd" 结尾（劈词实锤）
-	base := hardCut(para, opts)
-	if runeLen(base[0]) != 100 || !strings.HasSuffix(base[0], "abcd") {
-		t.Errorf("对照组异常：基础版首块 = %d rune，尾部 %q（预期 100 rune 且劈开单词）",
-			runeLen(base[0]), string([]rune(base[0])[94:]))
-	}
+ // 对比：基础版硬切在同一文本上的首块恰好 100 rune，且以 "abcd" 结尾（劈词实锤）
+ base := hardCut(para, opts)
+ if runeLen(base[0]) != 100 || !strings.HasSuffix(base[0], "abcd") {
+  t.Errorf("对照组异常：基础版首块 = %d rune，尾部 %q（预期 100 rune 且劈开单词）",
+   runeLen(base[0]), string([]rune(base[0])[94:]))
+ }
 }
 
 // endsAtBreakRune 判断块是否切在空白/标点之后（即没有把一个单词从中间劈开）。
 func endsAtBreakRune(chunk string) bool {
-	runes := []rune(chunk)
-	return isBreakRune(runes[len(runes)-1])
+ runes := []rune(chunk)
+ return isBreakRune(runes[len(runes)-1])
 }
 
 // TestChunkRefined_OverlapStillCorrect 验证边界回退后重叠逻辑仍正确：
 // 相邻块恰好重叠 OverlapChars 个 rune，去重叠拼接还原原文。
 func TestChunkRefined_OverlapStillCorrect(t *testing.T) {
-	// TrimSpace 与段落入口行为对齐（实际切块输入是去掉尾部空格的 319 rune）
-	para := strings.TrimSpace(strings.Repeat("abcdefg ", 40))
-	opts := ChunkOptions{MaxChars: 100, OverlapChars: 20}
+ // TrimSpace 与段落入口行为对齐（实际切块输入是去掉尾部空格的 319 rune）
+ para := strings.TrimSpace(strings.Repeat("abcdefg ", 40))
+ opts := ChunkOptions{MaxChars: 100, OverlapChars: 20}
 
-	chunks := ChunkRefined(para, opts)
-	if len(chunks) < 2 {
-		t.Fatalf("len(chunks) = %d, want >= 2", len(chunks))
-	}
-	for i := 0; i+1 < len(chunks); i++ {
-		cur, next := []rune(chunks[i]), []rune(chunks[i+1])
-		ov := opts.OverlapChars
-		if len(cur) < ov || len(next) < ov {
-			t.Fatalf("块长度不足以容纳重叠：chunks[%d]=%d, chunks[%d]=%d", i, len(cur), i+1, len(next))
-		}
-		if string(cur[len(cur)-ov:]) != string(next[:ov]) {
-			t.Errorf("chunks[%d] 与 chunks[%d] 之间重叠不正确", i, i+1)
-		}
-	}
-	var sb strings.Builder
-	sb.WriteString(chunks[0])
-	for _, c := range chunks[1:] {
-		sb.WriteString(string([]rune(c)[opts.OverlapChars:]))
-	}
-	if sb.String() != para {
-		t.Errorf("去重叠拼接后与原文不一致：got %d rune, want %d", runeLen(sb.String()), runeLen(para))
-	}
+ chunks := ChunkRefined(para, opts)
+ if len(chunks) < 2 {
+  t.Fatalf("len(chunks) = %d, want >= 2", len(chunks))
+ }
+ for i := 0; i+1 < len(chunks); i++ {
+  cur, next := []rune(chunks[i]), []rune(chunks[i+1])
+  ov := opts.OverlapChars
+  if len(cur) < ov || len(next) < ov {
+   t.Fatalf("块长度不足以容纳重叠：chunks[%d]=%d, chunks[%d]=%d", i, len(cur), i+1, len(next))
+  }
+  if string(cur[len(cur)-ov:]) != string(next[:ov]) {
+   t.Errorf("chunks[%d] 与 chunks[%d] 之间重叠不正确", i, i+1)
+  }
+ }
+ var sb strings.Builder
+ sb.WriteString(chunks[0])
+ for _, c := range chunks[1:] {
+  sb.WriteString(string([]rune(c)[opts.OverlapChars:]))
+ }
+ if sb.String() != para {
+  t.Errorf("去重叠拼接后与原文不一致：got %d rune, want %d", runeLen(sb.String()), runeLen(para))
+ }
 }
 
 // TestChunkRefined_ChinesePunctuationRetreat 验证中文场景：
 // 单句超长但内部有逗号时，硬切回退到逗号后下刀（比随机位置更不伤语义）。
 func TestChunkRefined_ChinesePunctuationRetreat(t *testing.T) {
-	// 每 10 字一个逗号，无句末标点 → 单句 200+ rune，走 hardCutBoundary
-	var sb strings.Builder
-	for i := 0; i < 20; i++ {
-		sb.WriteString(strings.Repeat("汉", 10))
-		sb.WriteString("，")
-	}
-	para := sb.String() // 220 rune
-	opts := ChunkOptions{MaxChars: 100, OverlapChars: 20}
+ // 每 10 字一个逗号，无句末标点 → 单句 200+ rune，走 hardCutBoundary
+ var sb strings.Builder
+ for i := 0; i < 20; i++ {
+  sb.WriteString(strings.Repeat("汉", 10))
+  sb.WriteString("，")
+ }
+ para := sb.String() // 220 rune
+ opts := ChunkOptions{MaxChars: 100, OverlapChars: 20}
 
-	chunks := ChunkRefined(para, opts)
-	for i, c := range chunks {
-		if runeLen(c) > opts.MaxChars {
-			t.Errorf("chunks[%d] = %d rune，超过 MaxChars=%d", i, runeLen(c), opts.MaxChars)
-		}
-	}
-	// 逗号在 index 10,21,...,98（0-based）。窗口 [0,100) 的右端 100 落在 "汉" 上，
-	// 向左回退找到 index 98 的逗号 → cut=99，首块以逗号结尾。
-	if runeLen(chunks[0]) != 99 || !strings.HasSuffix(chunks[0], "，") {
-		t.Errorf("首块 = %d rune，尾部 %q；预期 99 rune 且以逗号结尾",
-			runeLen(chunks[0]), string([]rune(chunks[0])[max(0, runeLen(chunks[0])-3):]))
-	}
+ chunks := ChunkRefined(para, opts)
+ for i, c := range chunks {
+  if runeLen(c) > opts.MaxChars {
+   t.Errorf("chunks[%d] = %d rune，超过 MaxChars=%d", i, runeLen(c), opts.MaxChars)
+  }
+ }
+ // 逗号在 index 10,21,...,98（0-based）。窗口 [0,100) 的右端 100 落在 "汉" 上，
+ // 向左回退找到 index 98 的逗号 → cut=99，首块以逗号结尾。
+ if runeLen(chunks[0]) != 99 || !strings.HasSuffix(chunks[0], "，") {
+  t.Errorf("首块 = %d rune，尾部 %q；预期 99 rune 且以逗号结尾",
+   runeLen(chunks[0]), string([]rune(chunks[0])[max(0, runeLen(chunks[0])-3):]))
+ }
 }
 
 // TestChunkRefined_SmallParagraphsSameAsBase 验证未触发超限时，
 // 进阶版与基础版行为完全一致（段落打包路径不变，无回归）。
 func TestChunkRefined_SmallParagraphsSameAsBase(t *testing.T) {
-	text := "第一段：甲乙丙丁。\n\n第二段：戊己庚辛。\n\n第三段：壬癸。"
-	opts := ChunkOptions{MaxChars: 100, OverlapChars: 10}
+ text := "第一段：甲乙丙丁。\n\n第二段：戊己庚辛。\n\n第三段：壬癸。"
+ opts := ChunkOptions{MaxChars: 100, OverlapChars: 10}
 
-	base := Chunk(text, opts)
-	refined := ChunkRefined(text, opts)
-	if len(base) != len(refined) {
-		t.Fatalf("块数不同：base=%d, refined=%d", len(base), len(refined))
-	}
-	for i := range base {
-		if base[i] != refined[i] {
-			t.Errorf("chunks[%d] 不同：base=%q, refined=%q", i, base[i], refined[i])
-		}
-	}
+ base := Chunk(text, opts)
+ refined := ChunkRefined(text, opts)
+ if len(base) != len(refined) {
+  t.Fatalf("块数不同：base=%d, refined=%d", len(base), len(refined))
+ }
+ for i := range base {
+  if base[i] != refined[i] {
+   t.Errorf("chunks[%d] 不同：base=%q, refined=%q", i, base[i], refined[i])
+  }
+ }
 }
 
 // TestChunkRefined_NoDeadLoop 验证边界回退不会死循环：
 // 窗口内完全找不到空白/标点时退化为硬切，且 start 严格前进。
 func TestChunkRefined_NoDeadLoop(t *testing.T) {
-	para := strings.Repeat("x", 500) // 无任何 break rune
-	done := make(chan []string, 1)
-	go func() {
-		done <- ChunkRefined(para, ChunkOptions{MaxChars: 100, OverlapChars: 20})
-	}()
-	select {
-	case chunks := <-done:
-		if len(chunks) == 0 {
-			t.Error("无边界可退时仍应硬切产块")
-		}
-		for i, c := range chunks {
-			if runeLen(c) > 100 {
-				t.Errorf("chunks[%d] = %d rune，超过 MaxChars=100", i, runeLen(c))
-			}
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("2 秒未返回：边界回退导致死循环")
-	}
+ para := strings.Repeat("x", 500) // 无任何 break rune
+ done := make(chan []string, 1)
+ go func() {
+  done <- ChunkRefined(para, ChunkOptions{MaxChars: 100, OverlapChars: 20})
+ }()
+ select {
+ case chunks := <-done:
+  if len(chunks) == 0 {
+   t.Error("无边界可退时仍应硬切产块")
+  }
+  for i, c := range chunks {
+   if runeLen(c) > 100 {
+    t.Errorf("chunks[%d] = %d rune，超过 MaxChars=100", i, runeLen(c))
+   }
+  }
+ case <-time.After(2 * time.Second):
+  t.Fatal("2 秒未返回：边界回退导致死循环")
+ }
 }
 ```
 
@@ -713,7 +713,6 @@ func TestChunkRefined_NoDeadLoop(t *testing.T) {
 中文 200~270 token / 英文 100 token（换算经验值见骨架 `DefaultChunkOptions` 注释），
 落在常见起点 200~500 token 的保守一侧；生产做法是把 `MaxChars` 换成 `MaxTokens` +
 tokenizer 计数，切块策略本身（段落/句子/边界回退）完全复用。
-
 
 ## 四、对照清单
 

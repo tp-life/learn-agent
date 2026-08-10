@@ -86,18 +86,21 @@ graph TD
 
 验收标准：RAG bad case 三板斧（检索不到 / 答非所问 / 编造）能讲清并能用 eval 量化。
 
-### 阶段三：深入（第 11-16 周）— ⬜ 未开始
+### 阶段三：深入（第 11-16 周）— ⬜ 未开始（教程已预写）
 
 | 类别 | 内容                                                                                      |
 | ---- | ----------------------------------------------------------------------------------------- |
 | 概念 | 多 Agent 编排（planner/worker/critic、handoff）、并发控制                                 |
 | 概念 | 生产化：错误恢复、human-in-the-loop、成本与延迟权衡                                       |
 | 工具 | Go 并发（goroutine/channel 编排 agent 任务）、Postgres 持久化、Langfuse trace、MCP server |
-| 项目 | **项目 3：多 Agent 任务系统**（Go 编排引擎 + TS 实时看板，简历主力项目）                  |
+| 项目 | **项目 3：`stage-03-multi-agent/` 多 Agent 任务系统**（Go 编排引擎 + TS 实时看板，简历主力项目） |
+| 沉淀 | `docs/multi-agent-orchestration-guide.md` ✅ 已预写；`docs/stages/stage-03-multi-agent-production.md` ✅ 已预写 |
 
 验收标准：架构文档 + 能讲清"为什么这样拆 agent、失败如何处理"。
 
-### 阶段四：求职（第 17-20 周）— ⬜ 未开始
+### 阶段四：求职（第 17-20 周）— ⬜ 未开始（教程已预写）
+
+- 沉淀：`docs/stages/stage-04-job-hunting.md` ✅ 已预写（题库索引、系统设计答题骨架、简历示范段落、任务清单）
 
 - 简历：3 个项目按"问题 → 架构 → 量化结果"写
 - 开源：迷你框架或 MCP server 单独开源（英文 README）；给开源项目提 PR
@@ -122,6 +125,8 @@ graph TD
 | 阶段二练习 1：embedding client              | ✅   | 2026-08-06 |
 | 阶段二练习 2-5 骨架 + 参考答案就绪          | ✅   | 2026-08-06 |
 | 项目 2 脚手架 + 练习 6-9 材料就绪           | ✅   | 2026-08-06 |
+| 阶段三教程 + 预习指南预写                   | ✅   | 2026-08-10 |
+| 阶段四教程预写                              | ✅   | 2026-08-10 |
 
 > 状态图例：✅ 完成 / 🔄 进行中 / 📖 学习中 / ⬜ 未开始
 
@@ -136,5 +141,8 @@ graph TD
 | `docs/stages/stage-XX-*.md`               | 每个阶段的沉淀：学什么、核心概念、注意事项、下一步               |
 | `docs/solutions/stage-XX/exercise-N-*.md` | 练习参考答案：参考实现 + 关键设计点 + 对照清单（完成练习后再看） |
 | `docs/embedding-vectordb-guide.md`        | 阶段二预习材料：embedding 与向量库实战指南                       |
+| `docs/multi-agent-orchestration-guide.md` | 阶段三预习材料：多 agent 编排模式 + Go 并发速查 + 生产化清单     |
+| `docs/stages/stage-03-multi-agent-production.md` | 阶段三沉淀（已预写）：多 Agent 编排 + 生产化，练习 1-9 规划 |
+| `docs/stages/stage-04-job-hunting.md`     | 阶段四沉淀（已预写）：题库索引、系统设计骨架、简历示范、投递任务清单 |
 | `mini-agent/`                             | 项目 1 代码；阶段二 Go 概念练习（embedding/向量库/RAG）在此扩展 |
 | `stage-02-kb-agent/`                      | 项目 2 代码（阶段二启动后创建）：全栈知识库 Agent                |
