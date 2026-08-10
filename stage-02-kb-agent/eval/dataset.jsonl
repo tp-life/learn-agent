@@ -1,0 +1,8 @@
+{"question": "RAG 是什么，它解决了 LLM 的什么问题？", "expect_sources": ["rag-basics.md"]}
+{"question": "为什么不用微调把知识直接灌进模型？", "expect_sources": ["rag-basics.md"]}
+{"question": "chunk 切得太大或太小各有什么坏处？", "expect_sources": ["chunking.md"]}
+{"question": "固定窗口切分时相邻块为什么要重叠（overlap）？", "expect_sources": ["chunking.md"]}
+{"question": "为什么文本检索默认用余弦相似度而不是欧氏距离？", "expect_sources": ["embedding.md"]}
+{"question": "bge-m3 输出的向量是多少维的？", "expect_sources": ["embedding.md"]}
+{"question": "长期记忆和 RAG 的区别是什么？", "expect_sources": ["memory.md"]}
+{"question": "agent 的长期记忆有哪些召回时机的设计？", "expect_sources": ["memory.md"]}

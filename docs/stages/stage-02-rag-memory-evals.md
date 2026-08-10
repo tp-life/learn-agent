@@ -11,6 +11,29 @@
 - **Go 概念练习（embedding / 向量库 / RAG / Memory）**：不开新项目，直接在 `mini-agent/` 上新增独立 package（`internal/embed`、`internal/vectorstore`、`internal/rag` 等）。理由：复用阶段一的 `llm.Client`（含重试、流式）和 ReAct 循环，RAG 检索最终以"工具"形态接入 agent，正是知识拓扑图中 RAG 依赖 ReAct 的体现。
 - **项目 2（全栈知识库 Agent）**：与 Go 代码零依赖，新建 `stage-02-kb-agent/`（Next.js + Vercel AI SDK）。命名带阶段前缀，表示这是阶段二的产出。
 
+## 〇.五、阶段知识图谱
+
+```mermaid
+graph TD
+    A[Embedding<br/>文本→向量<br/>练习1: internal/embed] --> B[向量检索<br/>余弦相似度 / 暴力 top-k<br/>练习2: internal/vectorstore]
+    C[Chunking<br/>结构切分 + overlap<br/>练习3: internal/rag/chunk.go] --> D[RAG 写入路径<br/>Ingest: 切块→embed→入库]
+    A --> D
+    B --> D
+    D --> E[RAG 查询路径<br/>练习4: kb_search 工具]
+    B --> E
+    E --> F[带引用生成<br/>编号引用 + 防幻觉 prompt]
+    A --> G[长期 Memory<br/>练习5: Remember/Recall 工具]
+    B --> G
+    R1[阶段一 ReAct 循环<br/>internal/agent] -.工具即能力.-> E
+    R1 -.工具即能力.-> G
+    F --> H[Evals<br/>召回率 / MRR / bad case 三板斧<br/>练习8-9: TS 侧]
+    H --> I[调优闭环<br/>chunk 大小 / top-k / 混合检索 / rerank]
+    I -.回头改参数.-> C
+    I -.回头改参数.-> E
+```
+
+读法：实线 = 数据/依赖流向；虚线 = 反哺关系。左半（A/B/C/D/E/F）是 RAG 主线，G 是 Memory 支线（与 RAG 共享 embedding + 检索两大底座），H/I 是评估与调优闭环——Evals 不是最后一步，而是驱动前面所有环节改参数的依据。
+
 ## 一、这个阶段在学什么
 
 把阶段一的"会对话的 agent"升级为"有知识、有记忆、可度量质量的 agent"：
@@ -152,6 +175,10 @@ HNSW（分层可导航小世界图）是 ANN 索引：多层图结构，上层�
 
 - ✅ `docs/embedding-vectordb-guide.md` 预写（embedding 选型、硅基流动/Ollama 接入、向量库概念）
 - ✅ 阶段二结构决策：Go 概念部分扩展 `mini-agent/`，项目 2 新建 `stage-02-kb-agent/`
+- ✅ 练习 1：embedding client（`internal/embed`，httptest 测试全绿；修复过 index 越界 off-by-one）
+- ✅ 练习 2-5 骨架 + `TODO(练习N)` 标注全部就位，参考答案均实际编译+测试验证后入库（`docs/solutions/stage-02/`）
+- ✅ 项目 2 `stage-02-kb-agent/` 脚手架完成（Next.js + AI SDK 手工最小脚手架），练习 6-8 骨架 + TODO 就位、答案经 mock 模式实际运行验证；练习 9 为无代码调优报告
+- ⚠️ 环境坑：系统 node v22.12.0 与 pnpm 11.17 不兼容，TS 项目所有 pnpm 命令需 `PATH=/opt/homebrew/opt/node/bin:$PATH`（homebrew node v26）
 
 ## 六、下一步（练习/任务清单，带状态）
 
@@ -159,20 +186,20 @@ HNSW（分层可导航小世界图）是 ANN 索引：多层图结构，上层�
 
 | #   | 练习                                                                                          | 考察点                    | 计划代码位置                          | 状态 |
 | --- | --------------------------------------------------------------------------------------------- | ------------------------- | ------------------------------------- | ---- |
-| 1   | embedding client：封装硅基流动 bge-m3（OpenAI 兼容），批量输入、**按 index 归位**、重试复用   | API 封装基本功            | `mini-agent/internal/embed/embed.go`    | 📖 骨架已就绪，待用户实现（[参考答案](../solutions/stage-02/exercise-1-embedding-client.md)） |
-| 2   | 内存向量库：余弦相似度 + top-k 暴力检索，支持元数据与 JSON 持久化                              | 检索核心算法手写          | `mini-agent/internal/vectorstore/`    | ⬜   |
-| 3   | chunking：按结构（段落/标题）切分 + 固定窗口 overlap 兜底                                     | RAG 第一调参位            | `mini-agent/internal/rag/`            | ⬜   |
-| 4   | RAG 工具：`kb_search` 接入 agent（检索 → 拼 prompt → 带编号引用），CLI 可灌入本地 md 文档     | RAG 与 ReAct 的结合       | `mini-agent/internal/rag/` + tools    | ⬜   |
-| 5   | 长期 memory 工具：`memory_save` / `memory_recall`（sqlite 或 JSON 文件存储，回忆=检索）       | Memory 设计               | `mini-agent/internal/memory/`         | ⬜   |
+| 1   | embedding client：封装硅基流动 bge-m3（OpenAI 兼容），批量输入、**按 index 归位**、重试复用   | API 封装基本功            | `mini-agent/internal/embed/embed.go`    | ✅（2026-08-06 完成，含 index 越界修正；[参考答案](../solutions/stage-02/exercise-1-embedding-client.md)） |
+| 2   | 内存向量库：余弦相似度 + top-k 暴力检索，支持元数据与 JSON 持久化                              | 检索核心算法手写          | `mini-agent/internal/vectorstore/store.go` | 📖 骨架已就绪，待用户实现（[参考答案](../solutions/stage-02/exercise-2-vector-store.md)） |
+| 3   | chunking：按结构（段落/标题）切分 + 固定窗口 overlap 兜底                                     | RAG 第一调参位            | `mini-agent/internal/rag/chunk.go`         | 📖 骨架已就绪，待用户实现（[参考答案](../solutions/stage-02/exercise-3-chunking.md)） |
+| 4   | RAG 工具：`kb_search` 接入 agent（检索 → 拼 prompt → 带编号引用），CLI 可灌入本地 md 文档     | RAG 与 ReAct 的结合       | `mini-agent/internal/rag/kb.go`、`tool.go`（main.go 接线已由 AI 组装） | 📖 骨架已就绪，待用户实现（[参考答案](../solutions/stage-02/exercise-4-rag-tool.md)） |
+| 5   | 长期 memory 工具：`memory_save` / `memory_recall`（向量检索式回忆 + JSON 持久化）             | Memory 设计               | `mini-agent/internal/memory/memory.go`     | 📖 骨架已就绪，待用户实现（[参考答案](../solutions/stage-02/exercise-5-memory-tools.md)） |
 
 ### TS 侧：项目 2 `stage-02-kb-agent/`（产品化 + 评估）
 
 | #   | 练习                                                                                  | 考察点             | 状态 |
 | --- | ------------------------------------------------------------------------------------- | ------------------ | ---- |
-| 6   | Next.js + Vercel AI SDK 脚手架：文档上传（md/txt/pdf）→ 服务端 chunking + 入库        | 全栈 RAG 写入路径  | ⬜   |
-| 7   | 问答界面：流式回答 + 可点击引用（跳回原文 chunk）                                     | AI SDK 流式协议    | ⬜   |
-| 8   | eval 脚本：建 20+ 条"问题→期望文档"测试集，量化 top-k 召回率与 MRR，输出 bad case 清单 | Evals 核心产出     | ⬜   |
-| 9   | 基于 eval 做一轮调优（chunk 大小 / top-k / 混合检索），记录前后指标对比               | 数据驱动优化闭环   | ⬜   |
+| 6   | 文档上传（md/txt）→ 服务端 chunking + embedding + 入库（`stage-02-kb-agent/` 已脚手架） | 全栈 RAG 写入路径  | 📖 骨架已就绪，待用户实现（[参考答案](../solutions/stage-02/exercise-6-ingest-pipeline.md)） |
+| 7   | 问答界面：流式回答 + 引用卡片（编号 + 来源 + chunk 展开）                               | AI SDK 流式协议    | 📖 骨架已就绪，待用户实现（[参考答案](../solutions/stage-02/exercise-7-chat-ui.md)） |
+| 8   | eval 脚本：样例测试集（8 条）+ recall@k/MRR 指标 + bad case 清单                        | Evals 核心产出     | 📖 骨架已就绪，待用户实现（[参考答案](../solutions/stage-02/exercise-8-eval-script.md)） |
+| 9   | 基于 eval 做一轮调优（chunk 大小 / top-k / 混合检索），记录前后指标对比                 | 数据驱动优化闭环   | 📖 无代码练习，[报告模板](../solutions/stage-02/exercise-9-tuning-report.md) 已备 |
 
 > 练习 1-5 遵循 AGENTS.md 约定：AI 只写骨架 + `TODO(练习N)` 标注，参考答案同步存放于 `docs/solutions/stage-02/`，且答案必须实际编译验证通过。
 

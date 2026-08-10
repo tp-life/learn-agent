@@ -1,0 +1,23 @@
+# dependencies
+/node_modules
+
+# next.js 构建产物
+/.next
+/out
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# 环境变量（.env.example 是模板，必须提交）
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# 知识库落盘数据（运行时生成，含 embedding 向量，体积大）
+/data/kb.json
+/data/*.tmp
+
+# 系统文件
+.DS_Store

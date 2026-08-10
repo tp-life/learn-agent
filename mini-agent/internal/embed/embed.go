@@ -87,34 +87,9 @@ type embeddingResponse struct {
 	} `json:"usage"`
 }
 
-// TODO(练习1): 实现 Embed —— embedding 客户端的核心方法
-//
-// 任务：实现下面这个方法的函数体：
-//
-//	func (c *Client) Embed(texts []string) ([][]float32, error)
-//
-// 语义：输入一批文本，返回与之一一对应的向量切片（result[i] 是 texts[i] 的向量）。
-//
-// 提示：
-//   - 协议细节：POST {baseURL}/embeddings，请求/响应结构上面已定义好；
-//     鉴权头、http 调用、非 200 处理模式照抄 internal/llm/client.go 的 Chat
-//     （包括：非 200 必须返回带状态码的错误，别返回裸 fmt.Errorf——想想练习 2 的教训）。
-//   - 入参校验：texts 为空直接报错；含空字符串也要拦（embedding 空串没有意义，
-//     多半是上游 chunking 出了 bug，静默放行会把坏数据送进向量库）。
-//   - 归位：响应 data 按 index 字段放回对应位置（见 embeddingResponse 的注释），
-//     归位后逐个校验维度 == BgeM3Dimensions。
-//   - 结果完整性：len(data) != len(texts) 要报错，不能默默截断。
-//   - 测试：新建 embed_test.go，用 net/http/httptest 起一个假服务器，验证：
-//     ① 乱序返回的 data 被正确归位；② 空输入报错；③ 非 200 返回带状态码的错误。
-//     （不需要真实 API key 就能跑；想连真机验证另设环境变量做 smoke test。）
-//   - 加分项（可选）：① 批量上限——服务商对单批 input 条数有限制，
-//     超过时切成多批请求再拼回（注意跨批的 index 归位）；
-//     ② 重试——429/5xx 指数退避，逻辑与 llm.ChatWithRetry 同构
-//     （想想有没有办法不复制粘贴，比如抽公共 helper；不要求，体会即可）。
-//
-// 验收：`go test ./internal/embed/` 通过（httptest 假服务器测试）。
-//
-// 参考答案：docs/solutions/stage-02/exercise-1-embedding-client.md（完成后再看）
+// Embed 输入一批文本，返回与之一一对应的向量切片（result[i] 是 texts[i] 的向量）。
+// 实现要点见函数内注释；本练习的参考答案在
+// docs/solutions/stage-02/exercise-1-embedding-client.md。
 func (c *Client) Embed(texts []string) ([][]float32, error) {
 	if len(texts) == 0 {
 		return nil, fmt.Errorf("embed: empty input")
@@ -167,7 +142,7 @@ func (c *Client) Embed(texts []string) ([][]float32, error) {
 	result := make([][]float32, len(texts))
 
 	for _, d := range embResp.Data {
-		if d.Index < 0 || d.Index > len(texts) {
+		if d.Index < 0 || d.Index >= len(texts) {
 			return nil, fmt.Errorf("embed: index %d out of range [0,%d]", d.Index, len(texts))
 		}
 
