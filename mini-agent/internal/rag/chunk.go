@@ -13,6 +13,7 @@
 package rag
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -85,7 +86,7 @@ func Chunk(text string, opts ChunkOptions) []string {
 		if len(cur) == 0 {
 			return
 		}
-
+		fmt.Println(cur)
 		chunks = append(chunks, strings.Join(cur, "\n\n"))
 		cur = nil
 		curLen = 0
@@ -93,8 +94,9 @@ func Chunk(text string, opts ChunkOptions) []string {
 
 	for _, para := range splitParagraphs(text) {
 		paraLen := len([]rune(para))
-		if len(para) > opts.MaxChars {
+		if paraLen > opts.MaxChars {
 			flush()
+			fmt.Println(paraLen, len(para), opts.MaxChars, "sssss")
 			chunks = append(chunks, hardCut(para, opts)...)
 			continue
 		}
