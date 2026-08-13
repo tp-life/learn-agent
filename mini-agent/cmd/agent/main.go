@@ -13,6 +13,7 @@ import (
 	"mini-agent/internal/agent"
 	"mini-agent/internal/embed"
 	"mini-agent/internal/llm"
+	"mini-agent/internal/memory"
 	"mini-agent/internal/rag"
 	"mini-agent/internal/tools"
 	"mini-agent/internal/vectorstore"
@@ -28,7 +29,10 @@ const systemPrompt = `你是一个乐于助人的助手。
 
 // kbPath 是知识库向量索引的持久化文件。
 // 放在 workspace 下与读写工具的根目录一致，方便用 read_file 工具查看。
-const kbPath = "./workspace/kb.json"
+const (
+	kbPath  = "./workspace/kb.json"
+	memPath = "memory.json"
+)
 
 func main() {
 	apiKey := os.Getenv("DEEPSEEK_API_KEY")
@@ -61,6 +65,13 @@ func main() {
 		kb = rag.NewKnowledgeBase(embedClient, store, rag.DefaultChunkOptions())
 		registry.Register(rag.NewKBSearch(embedClient, store))
 		fmt.Println("知识库已启用：/learn <文件路径> 收录文档，模型可用 kb_search 检索。")
+
+		memVs := vectorstore.NewStore()
+		_ = memVs.Load(memPath)
+		memStore := memory.NewStore(memVs, embedClient, memPath)
+		registry.Register(memory.MemoryRecall{Store: memStore})
+		registry.Register(memory.MemorySave{Store: memStore})
+
 	}
 
 	client := llm.NewClient(apiKey)

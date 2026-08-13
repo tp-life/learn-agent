@@ -15,123 +15,123 @@ import 从骨架的 `errors` 改为：
 
 ```go
 import (
-	"encoding/json"
-	"fmt"
-	"strings"
-	"time"
+ "encoding/json"
+ "fmt"
+ "strings"
+ "time"
 
-	"mini-agent/internal/tools"
-	"mini-agent/internal/vectorstore"
+ "mini-agent/internal/tools"
+ "mini-agent/internal/vectorstore"
 )
 ```
 
 ```go
 // Remember 把一条事实写入长期记忆并立即持久化：embed → 入库 → Save 落盘。
 func (s *Store) Remember(fact string) error {
-	// 空事实没有语义，在最早的层面拦下——embed.Client 也会拒绝空串，
-	// 但让坏输入多走一层没有意义。
-	fact = strings.TrimSpace(fact)
-	if fact == "" {
-		return fmt.Errorf("memory: empty fact")
-	}
+ // 空事实没有语义，在最早的层面拦下——embed.Client 也会拒绝空串，
+ // 但让坏输入多走一层没有意义。
+ fact = strings.TrimSpace(fact)
+ if fact == "" {
+  return fmt.Errorf("memory: empty fact")
+ }
 
-	// embed 是批量接口，单条也要包成单元素切片。
-	vecs, err := s.emb.Embed([]string{fact})
-	if err != nil {
-		return fmt.Errorf("memory: embed fact: %w", err)
-	}
+ // embed 是批量接口，单条也要包成单元素切片。
+ vecs, err := s.emb.Embed([]string{fact})
+ if err != nil {
+  return fmt.Errorf("memory: embed fact: %w", err)
+ }
 
-	doc := vectorstore.Document{
-		// ID 只需唯一：纳秒时间戳足够（单进程内不会重复）。
-		ID:       fmt.Sprintf("mem-%d", time.Now().UnixNano()),
-		Text:     fact,
-		Vector:   vecs[0],
-		Metadata: map[string]string{"kind": "memory"},
-	}
-	if err := s.vs.Add(doc); err != nil {
-		return fmt.Errorf("memory: add fact: %w", err)
-	}
+ doc := vectorstore.Document{
+  // ID 只需唯一：纳秒时间戳足够（单进程内不会重复）。
+  ID:       fmt.Sprintf("mem-%d", time.Now().UnixNano()),
+  Text:     fact,
+  Vector:   vecs[0],
+  Metadata: map[string]string{"kind": "memory"},
+ }
+ if err := s.vs.Add(doc); err != nil {
+  return fmt.Errorf("memory: add fact: %w", err)
+ }
 
-	// 长期记忆的价值就在"跨会话"：写内存不落盘等于没记。
-	// 每次写入即全量 Save，数据量小（几十上百条）时完全够用；
-	// 保存失败必须返回错误，不能吞——否则用户以为记住了，重启后丢失。
-	if err := s.vs.Save(s.path); err != nil {
-		return fmt.Errorf("memory: persist: %w", err)
-	}
-	return nil
+ // 长期记忆的价值就在"跨会话"：写内存不落盘等于没记。
+ // 每次写入即全量 Save，数据量小（几十上百条）时完全够用；
+ // 保存失败必须返回错误，不能吞——否则用户以为记住了，重启后丢失。
+ if err := s.vs.Save(s.path); err != nil {
+  return fmt.Errorf("memory: persist: %w", err)
+ }
+ return nil
 }
 
 // Recall 用自然语言查询检索相关记忆，返回事实文本列表（按相关度降序）。
 func (s *Store) Recall(query string, topK int) ([]string, error) {
-	// topK<=0 兜底为默认值而不是报错：本层的调用方是工具 Execute，
-	// 模型很可能不传 top_k——面向模型的边界层宜宽，
-	// 面向代码的底层库（vectorstore.Search 对 topK<=0 报错）宜严。
-	if topK <= 0 {
-		topK = 3
-	}
+ // topK<=0 兜底为默认值而不是报错：本层的调用方是工具 Execute，
+ // 模型很可能不传 top_k——面向模型的边界层宜宽，
+ // 面向代码的底层库（vectorstore.Search 对 topK<=0 报错）宜严。
+ if topK <= 0 {
+  topK = 3
+ }
 
-	vecs, err := s.emb.Embed([]string{query})
-	if err != nil {
-		return nil, fmt.Errorf("memory: embed query: %w", err)
-	}
+ vecs, err := s.emb.Embed([]string{query})
+ if err != nil {
+  return nil, fmt.Errorf("memory: embed query: %w", err)
+ }
 
-	// 空库时 Search 返回空结果而非错误，Recall 原样透传。
-	hits, err := s.vs.Search(vecs[0], topK)
-	if err != nil {
-		return nil, fmt.Errorf("memory: search: %w", err)
-	}
+ // 空库时 Search 返回空结果而非错误，Recall 原样透传。
+ hits, err := s.vs.Search(vecs[0], topK)
+ if err != nil {
+  return nil, fmt.Errorf("memory: search: %w", err)
+ }
 
-	// 只暴露文本：工具结果要拼进 prompt 给模型看，
-	// Score 对模型没有信息量，给了反而稀释注意力。
-	facts := make([]string, 0, len(hits))
-	for _, h := range hits {
-		facts = append(facts, h.Doc.Text)
-	}
-	return facts, nil
+ // 只暴露文本：工具结果要拼进 prompt 给模型看，
+ // Score 对模型没有信息量，给了反而稀释注意力。
+ facts := make([]string, 0, len(hits))
+ for _, h := range hits {
+  facts = append(facts, h.Doc.Text)
+ }
+ return facts, nil
 }
 ```
 
 ```go
 func (t MemorySave) Execute(args string) (string, error) {
-	var p struct {
-		Fact string `json:"fact"`
-	}
-	// args 是模型生成的不可信输入：畸形 JSON 返回 error 喂回模型自我纠正。
-	// 注意 tools.decodeArgs 未导出，跨包用不了，这里自己 Unmarshal。
-	if err := json.Unmarshal([]byte(args), &p); err != nil {
-		return "", fmt.Errorf("memory_save: invalid arguments %q: %w", args, err)
-	}
-	if err := t.Store.Remember(p.Fact); err != nil {
-		return "", err
-	}
-	return "已记住：" + strings.TrimSpace(p.Fact), nil
+ var p struct {
+  Fact string `json:"fact"`
+ }
+ // args 是模型生成的不可信输入：畸形 JSON 返回 error 喂回模型自我纠正。
+ // 注意 tools.decodeArgs 未导出，跨包用不了，这里自己 Unmarshal。
+ if err := json.Unmarshal([]byte(args), &p); err != nil {
+  return "", fmt.Errorf("memory_save: invalid arguments %q: %w", args, err)
+ }
+ if err := t.Store.Remember(p.Fact); err != nil {
+  return "", err
+ }
+ return "已记住：" + strings.TrimSpace(p.Fact), nil
 }
 
 func (t MemoryRecall) Execute(args string) (string, error) {
-	var p struct {
-		Query string `json:"query"`
-		TopK  int    `json:"top_k"`
-	}
-	if err := json.Unmarshal([]byte(args), &p); err != nil {
-		return "", fmt.Errorf("memory_recall: invalid arguments %q: %w", args, err)
-	}
+ var p struct {
+  Query string `json:"query"`
+  TopK  int    `json:"top_k"`
+ }
+ if err := json.Unmarshal([]byte(args), &p); err != nil {
+  return "", fmt.Errorf("memory_recall: invalid arguments %q: %w", args, err)
+ }
 
-	facts, err := t.Store.Recall(p.Query, p.TopK)
-	if err != nil {
-		return "", err
-	}
-	// 明确的否定结果比空字符串更利于模型推理：
-	// 空串会让模型分不清"没查到"和"工具坏了"。
-	if len(facts) == 0 {
-		return "没有找到相关记忆。", nil
-	}
+ facts, err := t.Store.Recall(p.Query, p.TopK)
+ if err != nil {
+  return "", err
+ }
+ // 明确的否定结果比空字符串更利于模型推理：
+ // 空串会让模型分不清"没查到"和"工具坏了"。
+ if len(facts) == 0 {
+  return "没有找到相关记忆。", nil
+ }
 
-	var b strings.Builder
-	b.WriteString("检索到以下相关记忆：\n")
-	for i, f := range facts {
-		fmt.Fprintf(&b, "%d. %s\n", i+1, f)
-	}
-	return b.String(), nil
+ var b strings.Builder
+ b.WriteString("检索到以下相关记忆：\n")
+ for i, f := range facts {
+  fmt.Fprintf(&b, "%d. %s\n", i+1, f)
+ }
+ return b.String(), nil
 }
 ```
 
@@ -152,180 +152,180 @@ registry.Register(memory.MemoryRecall{Store: memStore})
 package memory
 
 import (
-	"path/filepath"
-	"strings"
-	"testing"
+ "path/filepath"
+ "strings"
+ "testing"
 
-	"mini-agent/internal/vectorstore"
+ "mini-agent/internal/vectorstore"
 )
 
 // fakeEmbedder 按文本查表返回预定义向量，未知文本返回 defaultVec。
 // 用 2 维小向量即可表达"语义远近"：同方向 = 语义相近。
 type fakeEmbedder struct {
-	vecs       map[string][]float32
-	defaultVec []float32
+ vecs       map[string][]float32
+ defaultVec []float32
 }
 
 func (f fakeEmbedder) Embed(texts []string) ([][]float32, error) {
-	out := make([][]float32, len(texts))
-	for i, t := range texts {
-		v, ok := f.vecs[t]
-		if !ok {
-			v = f.defaultVec
-		}
-		out[i] = v
-	}
-	return out, nil
+ out := make([][]float32, len(texts))
+ for i, t := range texts {
+  v, ok := f.vecs[t]
+  if !ok {
+   v = f.defaultVec
+  }
+  out[i] = v
+ }
+ return out, nil
 }
 
 // newTestStore 建一个记忆库：两条事实，"不吃辣"与"猫叫年糕"方向正交。
 // 查询"饮食偏好"的向量靠近"不吃辣"，语义命中应返回它。
 func newTestStore(t *testing.T, path string) *Store {
-	t.Helper()
-	emb := fakeEmbedder{
-		vecs: map[string][]float32{
-			"用户不吃辣":   {1, 0},
-			"用户的猫叫年糕": {0, 1},
-			"饮食偏好":    {1, 0.1},
-		},
-		defaultVec: []float32{0.5, 0.5},
-	}
-	return NewStore(vectorstore.NewStore(), emb, path)
+ t.Helper()
+ emb := fakeEmbedder{
+  vecs: map[string][]float32{
+   "用户不吃辣":   {1, 0},
+   "用户的猫叫年糕": {0, 1},
+   "饮食偏好":    {1, 0.1},
+  },
+  defaultVec: []float32{0.5, 0.5},
+ }
+ return NewStore(vectorstore.NewStore(), emb, path)
 }
 
 // TestRememberThenRecall_SemanticHit 验证核心链路：Remember 后 Recall 按语义命中。
 func TestRememberThenRecall_SemanticHit(t *testing.T) {
-	s := newTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
+ s := newTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
 
-	if err := s.Remember("用户不吃辣"); err != nil {
-		t.Fatalf("Remember: %v", err)
-	}
-	if err := s.Remember("用户的猫叫年糕"); err != nil {
-		t.Fatalf("Remember: %v", err)
-	}
+ if err := s.Remember("用户不吃辣"); err != nil {
+  t.Fatalf("Remember: %v", err)
+ }
+ if err := s.Remember("用户的猫叫年糕"); err != nil {
+  t.Fatalf("Remember: %v", err)
+ }
 
-	facts, err := s.Recall("饮食偏好", 1)
-	if err != nil {
-		t.Fatalf("Recall: %v", err)
-	}
-	if len(facts) != 1 || facts[0] != "用户不吃辣" {
-		t.Errorf("Recall = %v, want [用户不吃辣]（语义命中失败）", facts)
-	}
+ facts, err := s.Recall("饮食偏好", 1)
+ if err != nil {
+  t.Fatalf("Recall: %v", err)
+ }
+ if len(facts) != 1 || facts[0] != "用户不吃辣" {
+  t.Errorf("Recall = %v, want [用户不吃辣]（语义命中失败）", facts)
+ }
 }
 
 // TestRemember_RejectsEmpty 空事实必须报错，不进库。
 func TestRemember_RejectsEmpty(t *testing.T) {
-	s := newTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
-	if err := s.Remember("   "); err == nil {
-		t.Error("blank fact: want error, got nil")
-	}
+ s := newTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
+ if err := s.Remember("   "); err == nil {
+  t.Error("blank fact: want error, got nil")
+ }
 }
 
 // TestRecall_EmptyStore 空库 Recall 返回空结果，不算错误。
 func TestRecall_EmptyStore(t *testing.T) {
-	s := newTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
-	facts, err := s.Recall("随便查点什么", 3)
-	if err != nil {
-		t.Fatalf("Recall on empty store: %v", err)
-	}
-	if len(facts) != 0 {
-		t.Errorf("got %d facts, want 0", len(facts))
-	}
+ s := newTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
+ facts, err := s.Recall("随便查点什么", 3)
+ if err != nil {
+  t.Fatalf("Recall on empty store: %v", err)
+ }
+ if len(facts) != 0 {
+  t.Errorf("got %d facts, want 0", len(facts))
+ }
 }
 
 // TestRecall_TopKDefault topK<=0 时兜底为默认值而不是报错。
 func TestRecall_TopKDefault(t *testing.T) {
-	s := newTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
-	if err := s.Remember("用户不吃辣"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := s.Recall("饮食偏好", 0); err != nil {
-		t.Errorf("topK=0: want no error (default kicks in), got %v", err)
-	}
+ s := newTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
+ if err := s.Remember("用户不吃辣"); err != nil {
+  t.Fatal(err)
+ }
+ if _, err := s.Recall("饮食偏好", 0); err != nil {
+  t.Errorf("topK=0: want no error (default kicks in), got %v", err)
+ }
 }
 
 // TestPersistence_RoundTrip 持久化往返：Remember 落盘后，
 // 换一个全新向量库 Load 回来，Recall 仍能命中——这是"跨会话"的核心。
 func TestPersistence_RoundTrip(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "memory.json")
+ path := filepath.Join(t.TempDir(), "memory.json")
 
-	s1 := newTestStore(t, path)
-	if err := s1.Remember("用户不吃辣"); err != nil {
-		t.Fatalf("Remember: %v", err)
-	}
+ s1 := newTestStore(t, path)
+ if err := s1.Remember("用户不吃辣"); err != nil {
+  t.Fatalf("Remember: %v", err)
+ }
 
-	// 模拟进程重启：全新的 vectorstore，从磁盘 Load 恢复。
-	vs2 := vectorstore.NewStore()
-	if err := vs2.Load(path); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	s2 := NewStore(vs2, s1.emb, path)
+ // 模拟进程重启：全新的 vectorstore，从磁盘 Load 恢复。
+ vs2 := vectorstore.NewStore()
+ if err := vs2.Load(path); err != nil {
+  t.Fatalf("Load: %v", err)
+ }
+ s2 := NewStore(vs2, s1.emb, path)
 
-	facts, err := s2.Recall("饮食偏好", 1)
-	if err != nil {
-		t.Fatalf("Recall after reload: %v", err)
-	}
-	if len(facts) != 1 || facts[0] != "用户不吃辣" {
-		t.Errorf("Recall after reload = %v, want [用户不吃辣]", facts)
-	}
+ facts, err := s2.Recall("饮食偏好", 1)
+ if err != nil {
+  t.Fatalf("Recall after reload: %v", err)
+ }
+ if len(facts) != 1 || facts[0] != "用户不吃辣" {
+  t.Errorf("Recall after reload = %v, want [用户不吃辣]", facts)
+ }
 }
 
 // TestMemorySaveTool_Execute 工具层：合法参数写入成功并返回确认文本。
 func TestMemorySaveTool_Execute(t *testing.T) {
-	s := newTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
-	tool := MemorySave{Store: s}
+ s := newTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
+ tool := MemorySave{Store: s}
 
-	out, err := tool.Execute(`{"fact":"用户不吃辣"}`)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if !strings.Contains(out, "用户不吃辣") {
-		t.Errorf("output %q does not confirm the fact", out)
-	}
+ out, err := tool.Execute(`{"fact":"用户不吃辣"}`)
+ if err != nil {
+  t.Fatalf("Execute: %v", err)
+ }
+ if !strings.Contains(out, "用户不吃辣") {
+  t.Errorf("output %q does not confirm the fact", out)
+ }
 
-	facts, err := s.Recall("饮食偏好", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(facts) != 1 || facts[0] != "用户不吃辣" {
-		t.Errorf("fact not in store after tool Execute: %v", facts)
-	}
+ facts, err := s.Recall("饮食偏好", 1)
+ if err != nil {
+  t.Fatal(err)
+ }
+ if len(facts) != 1 || facts[0] != "用户不吃辣" {
+  t.Errorf("fact not in store after tool Execute: %v", facts)
+ }
 }
 
 // TestMemoryRecallTool_Execute 工具层：有记忆返回编号列表，空库返回明确否定。
 func TestMemoryRecallTool_Execute(t *testing.T) {
-	s := newTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
-	tool := MemoryRecall{Store: s}
+ s := newTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
+ tool := MemoryRecall{Store: s}
 
-	out, err := tool.Execute(`{"query":"饮食偏好"}`)
-	if err != nil {
-		t.Fatalf("Execute on empty: %v", err)
-	}
-	if !strings.Contains(out, "没有找到相关记忆") {
-		t.Errorf("empty store output %q, want 明确的否定结果", out)
-	}
+ out, err := tool.Execute(`{"query":"饮食偏好"}`)
+ if err != nil {
+  t.Fatalf("Execute on empty: %v", err)
+ }
+ if !strings.Contains(out, "没有找到相关记忆") {
+  t.Errorf("empty store output %q, want 明确的否定结果", out)
+ }
 
-	if err := s.Remember("用户不吃辣"); err != nil {
-		t.Fatal(err)
-	}
-	out, err = tool.Execute(`{"query":"饮食偏好","top_k":1}`)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
-	if !strings.Contains(out, "用户不吃辣") {
-		t.Errorf("output %q missing the fact", out)
-	}
+ if err := s.Remember("用户不吃辣"); err != nil {
+  t.Fatal(err)
+ }
+ out, err = tool.Execute(`{"query":"饮食偏好","top_k":1}`)
+ if err != nil {
+  t.Fatalf("Execute: %v", err)
+ }
+ if !strings.Contains(out, "用户不吃辣") {
+  t.Errorf("output %q missing the fact", out)
+ }
 }
 
 // TestTools_BadJSON 畸形 JSON 必须返回 error（喂回模型自我纠正），不能 panic。
 func TestTools_BadJSON(t *testing.T) {
-	s := newTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
-	if _, err := (MemorySave{Store: s}).Execute(`{not json`); err == nil {
-		t.Error("memory_save bad JSON: want error, got nil")
-	}
-	if _, err := (MemoryRecall{Store: s}).Execute(`{not json`); err == nil {
-		t.Error("memory_recall bad JSON: want error, got nil")
-	}
+ s := newTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
+ if _, err := (MemorySave{Store: s}).Execute(`{not json`); err == nil {
+  t.Error("memory_save bad JSON: want error, got nil")
+ }
+ if _, err := (MemoryRecall{Store: s}).Execute(`{not json`); err == nil {
+  t.Error("memory_recall bad JSON: want error, got nil")
+ }
 }
 ```
 
@@ -386,48 +386,48 @@ func TestTools_BadJSON(t *testing.T) {
 // 进阶：写入前做精确文本去重——完全相同的事实已存在则直接跳过，
 // 不重复入库、也不再调 embedding（见设计点：为什么只做精确去重）。
 func (s *Store) Remember(fact string) error {
-	// 空事实没有语义，在最早的层面拦下——embed.Client 也会拒绝空串，
-	// 但让坏输入多走一层没有意义。
-	fact = strings.TrimSpace(fact)
-	if fact == "" {
-		return fmt.Errorf("memory: empty fact")
-	}
+ // 空事实没有语义，在最早的层面拦下——embed.Client 也会拒绝空串，
+ // 但让坏输入多走一层没有意义。
+ fact = strings.TrimSpace(fact)
+ if fact == "" {
+  return fmt.Errorf("memory: empty fact")
+ }
 
-	// 精确文本去重（进阶）：逐条比对已有记忆的 Text，完全相同则跳过。
-	// 刻意不做语义级去重（相似度阈值判重）："用户不吃辣"和"用户现在吃辣了"
-	// 语义高度相似但含义相反，语义去重会把这类"更新"误判为重复而丢弃，
-	// 或者更糟——把旧事实删掉。宁可选保守的精确匹配（漏掉措辞不同的重复，
-	// 代价只是多占一个 top-k 名额），也不冒误删真实信息的风险。
-	for _, d := range s.vs.FindByMetadata("kind", "memory") {
-		if d.Text == fact {
-			return nil
-		}
-	}
+ // 精确文本去重（进阶）：逐条比对已有记忆的 Text，完全相同则跳过。
+ // 刻意不做语义级去重（相似度阈值判重）："用户不吃辣"和"用户现在吃辣了"
+ // 语义高度相似但含义相反，语义去重会把这类"更新"误判为重复而丢弃，
+ // 或者更糟——把旧事实删掉。宁可选保守的精确匹配（漏掉措辞不同的重复，
+ // 代价只是多占一个 top-k 名额），也不冒误删真实信息的风险。
+ for _, d := range s.vs.FindByMetadata("kind", "memory") {
+  if d.Text == fact {
+   return nil
+  }
+ }
 
-	// embed 是批量接口，单条也要包成单元素切片。
-	vecs, err := s.emb.Embed([]string{fact})
-	if err != nil {
-		return fmt.Errorf("memory: embed fact: %w", err)
-	}
+ // embed 是批量接口，单条也要包成单元素切片。
+ vecs, err := s.emb.Embed([]string{fact})
+ if err != nil {
+  return fmt.Errorf("memory: embed fact: %w", err)
+ }
 
-	doc := vectorstore.Document{
-		// ID 只需唯一：纳秒时间戳足够（单进程内不会重复）。
-		ID:       fmt.Sprintf("mem-%d", time.Now().UnixNano()),
-		Text:     fact,
-		Vector:   vecs[0],
-		Metadata: map[string]string{"kind": "memory"},
-	}
-	if err := s.vs.Add(doc); err != nil {
-		return fmt.Errorf("memory: add fact: %w", err)
-	}
+ doc := vectorstore.Document{
+  // ID 只需唯一：纳秒时间戳足够（单进程内不会重复）。
+  ID:       fmt.Sprintf("mem-%d", time.Now().UnixNano()),
+  Text:     fact,
+  Vector:   vecs[0],
+  Metadata: map[string]string{"kind": "memory"},
+ }
+ if err := s.vs.Add(doc); err != nil {
+  return fmt.Errorf("memory: add fact: %w", err)
+ }
 
-	// 长期记忆的价值就在"跨会话"：写内存不落盘等于没记。
-	// 每次写入即全量 Save，数据量小（几十上百条）时完全够用；
-	// 保存失败必须返回错误，不能吞——否则用户以为记住了，重启后丢失。
-	if err := s.vs.Save(s.path); err != nil {
-		return fmt.Errorf("memory: persist: %w", err)
-	}
-	return nil
+ // 长期记忆的价值就在"跨会话"：写内存不落盘等于没记。
+ // 每次写入即全量 Save，数据量小（几十上百条）时完全够用；
+ // 保存失败必须返回错误，不能吞——否则用户以为记住了，重启后丢失。
+ if err := s.vs.Save(s.path); err != nil {
+  return fmt.Errorf("memory: persist: %w", err)
+ }
+ return nil
 }
 ```
 
@@ -446,33 +446,33 @@ const forgetMinScore = 0.9
 // 返回删除的条数（0 或 1）：没有足够相似的记忆时返回 0 + nil，
 // 一条都不动——"没找到"不是错误，但"删错了"是事故。
 func (s *Store) Forget(query string) (int, error) {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return 0, fmt.Errorf("memory: empty query")
-	}
-	// 空库短路：没什么好忘的，也别浪费一次 embedding 调用。
-	if s.vs.Len() == 0 {
-		return 0, nil
-	}
+ query = strings.TrimSpace(query)
+ if query == "" {
+  return 0, fmt.Errorf("memory: empty query")
+ }
+ // 空库短路：没什么好忘的，也别浪费一次 embedding 调用。
+ if s.vs.Len() == 0 {
+  return 0, nil
+ }
 
-	vecs, err := s.emb.Embed([]string{query})
-	if err != nil {
-		return 0, fmt.Errorf("memory: embed query: %w", err)
-	}
-	hits, err := s.vs.Search(vecs[0], 1)
-	if err != nil {
-		return 0, fmt.Errorf("memory: search: %w", err)
-	}
-	if len(hits) == 0 || hits[0].Score < forgetMinScore {
-		return 0, nil
-	}
+ vecs, err := s.emb.Embed([]string{query})
+ if err != nil {
+  return 0, fmt.Errorf("memory: embed query: %w", err)
+ }
+ hits, err := s.vs.Search(vecs[0], 1)
+ if err != nil {
+  return 0, fmt.Errorf("memory: search: %w", err)
+ }
+ if len(hits) == 0 || hits[0].Score < forgetMinScore {
+  return 0, nil
+ }
 
-	s.vs.Delete(hits[0].Doc.ID)
-	// 与 Remember 同样的纪律：改动立即落盘，保存失败要上报。
-	if err := s.vs.Save(s.path); err != nil {
-		return 0, fmt.Errorf("memory: persist: %w", err)
-	}
-	return 1, nil
+ s.vs.Delete(hits[0].Doc.ID)
+ // 与 Remember 同样的纪律：改动立即落盘，保存失败要上报。
+ if err := s.vs.Save(s.path); err != nil {
+  return 0, fmt.Errorf("memory: persist: %w", err)
+ }
+ return 1, nil
 }
 ```
 
@@ -489,177 +489,177 @@ import 与基础版相同（`encoding/json`、`fmt`、`strings`、`time`、`tool
 package memory
 
 import (
-	"path/filepath"
-	"testing"
+ "path/filepath"
+ "testing"
 
-	"mini-agent/internal/vectorstore"
+ "mini-agent/internal/vectorstore"
 )
 
 // countingEmbedder 在查表假 Embedder 之上记录 embed 的文本条数：
 // 去重的收益之一是"重复事实一次 embedding 都不调"，必须能断言。
 type countingEmbedder struct {
-	vecs       map[string][]float32
-	defaultVec []float32
-	calls      int
+ vecs       map[string][]float32
+ defaultVec []float32
+ calls      int
 }
 
 func (c *countingEmbedder) Embed(texts []string) ([][]float32, error) {
-	c.calls += len(texts)
-	out := make([][]float32, len(texts))
-	for i, t := range texts {
-		v, ok := c.vecs[t]
-		if !ok {
-			v = c.defaultVec
-		}
-		out[i] = v
-	}
-	return out, nil
+ c.calls += len(texts)
+ out := make([][]float32, len(texts))
+ for i, t := range texts {
+  v, ok := c.vecs[t]
+  if !ok {
+   v = c.defaultVec
+  }
+  out[i] = v
+ }
+ return out, nil
 }
 
 // newForgetTestStore 建一个带计数 embedder 的记忆库：
 // "用户不吃辣" 与 "用户的猫叫年糕" 正交；"不吃辣" 与前者同向（得分 1.0）；
 // 未知文本走 defaultVec {0.5,0.5}，与两者的余弦都约 0.707 < forgetMinScore。
 func newForgetTestStore(t *testing.T, path string) (*Store, *countingEmbedder) {
-	t.Helper()
-	emb := &countingEmbedder{
-		vecs: map[string][]float32{
-			"用户不吃辣":   {1, 0},
-			"用户的猫叫年糕": {0, 1},
-			"饮食偏好":    {1, 0.1},
-			"不吃辣":      {1, 0}, // 与事实完全同向 → Forget 得分 1.0
-		},
-		defaultVec: []float32{0.5, 0.5},
-	}
-	return NewStore(vectorstore.NewStore(), emb, path), emb
+ t.Helper()
+ emb := &countingEmbedder{
+  vecs: map[string][]float32{
+   "用户不吃辣":   {1, 0},
+   "用户的猫叫年糕": {0, 1},
+   "饮食偏好":    {1, 0.1},
+   "不吃辣":      {1, 0}, // 与事实完全同向 → Forget 得分 1.0
+  },
+  defaultVec: []float32{0.5, 0.5},
+ }
+ return NewStore(vectorstore.NewStore(), emb, path), emb
 }
 
 // TestRemember_ExactDuplicateSkipped 验证精确文本去重：
 // 同一条事实 Remember 两次，库里只有一条，且第二次连 embedding 都没调。
 func TestRemember_ExactDuplicateSkipped(t *testing.T) {
-	s, emb := newForgetTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
+ s, emb := newForgetTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
 
-	if err := s.Remember("用户不吃辣"); err != nil {
-		t.Fatal(err)
-	}
-	callsAfterFirst := emb.calls
-	if err := s.Remember("用户不吃辣"); err != nil {
-		t.Fatal(err)
-	}
+ if err := s.Remember("用户不吃辣"); err != nil {
+  t.Fatal(err)
+ }
+ callsAfterFirst := emb.calls
+ if err := s.Remember("用户不吃辣"); err != nil {
+  t.Fatal(err)
+ }
 
-	if got := len(s.vs.FindByMetadata("kind", "memory")); got != 1 {
-		t.Errorf("重复 Remember 后库里有 %d 条, want 1", got)
-	}
-	if emb.calls != callsAfterFirst {
-		t.Errorf("重复 Remember 多调了 %d 次 embedding，去重短路未生效", emb.calls-callsAfterFirst)
-	}
+ if got := len(s.vs.FindByMetadata("kind", "memory")); got != 1 {
+  t.Errorf("重复 Remember 后库里有 %d 条, want 1", got)
+ }
+ if emb.calls != callsAfterFirst {
+  t.Errorf("重复 Remember 多调了 %d 次 embedding，去重短路未生效", emb.calls-callsAfterFirst)
+ }
 }
 
 // TestRemember_SimilarButDifferentKept 验证去重只做精确匹配：
 // "用户现在吃辣了"与"用户不吃辣"语义相近但文本不同，必须两条都保留——
 // 这正是参考答案强调"语义去重危险"的原因：这类"更新"不能被误判为重复。
 func TestRemember_SimilarButDifferentKept(t *testing.T) {
-	s, _ := newForgetTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
+ s, _ := newForgetTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
 
-	if err := s.Remember("用户不吃辣"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Remember("用户现在吃辣了"); err != nil {
-		t.Fatal(err)
-	}
-	if got := len(s.vs.FindByMetadata("kind", "memory")); got != 2 {
-		t.Errorf("语义相近但文本不同的两条事实只存了 %d 条, want 2", got)
-	}
+ if err := s.Remember("用户不吃辣"); err != nil {
+  t.Fatal(err)
+ }
+ if err := s.Remember("用户现在吃辣了"); err != nil {
+  t.Fatal(err)
+ }
+ if got := len(s.vs.FindByMetadata("kind", "memory")); got != 2 {
+  t.Errorf("语义相近但文本不同的两条事实只存了 %d 条, want 2", got)
+ }
 }
 
 // TestForget_RemovesMostSimilar 验证遗忘主链路：
 // 按语义找到最相似的一条删除，返回 1；之后 Recall 查不到它；
 // 其他记忆不受影响；删除已落盘（重启后依然不存在）。
 func TestForget_RemovesMostSimilar(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "memory.json")
-	s, _ := newForgetTestStore(t, path)
+ path := filepath.Join(t.TempDir(), "memory.json")
+ s, _ := newForgetTestStore(t, path)
 
-	if err := s.Remember("用户不吃辣"); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Remember("用户的猫叫年糕"); err != nil {
-		t.Fatal(err)
-	}
+ if err := s.Remember("用户不吃辣"); err != nil {
+  t.Fatal(err)
+ }
+ if err := s.Remember("用户的猫叫年糕"); err != nil {
+  t.Fatal(err)
+ }
 
-	// "不吃辣" 与 "用户不吃辣" 同向（得分 1.0 >= 阈值），应被删掉。
-	n, err := s.Forget("不吃辣")
-	if err != nil {
-		t.Fatalf("Forget: %v", err)
-	}
-	if n != 1 {
-		t.Fatalf("Forget 返回 %d, want 1", n)
-	}
+ // "不吃辣" 与 "用户不吃辣" 同向（得分 1.0 >= 阈值），应被删掉。
+ n, err := s.Forget("不吃辣")
+ if err != nil {
+  t.Fatalf("Forget: %v", err)
+ }
+ if n != 1 {
+  t.Fatalf("Forget 返回 %d, want 1", n)
+ }
 
-	// Recall 结果里不能再有被遗忘的事实；另一条记忆必须还在。
-	facts, err := s.Recall("饮食偏好", 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range facts {
-		if f == "用户不吃辣" {
-			t.Errorf("被遗忘的事实仍能被 Recall 命中：%v", facts)
-		}
-	}
-	if got := len(s.vs.FindByMetadata("kind", "memory")); got != 1 {
-		t.Errorf("Forget 后库里剩 %d 条, want 1（误删了其他记忆？）", got)
-	}
+ // Recall 结果里不能再有被遗忘的事实；另一条记忆必须还在。
+ facts, err := s.Recall("饮食偏好", 3)
+ if err != nil {
+  t.Fatal(err)
+ }
+ for _, f := range facts {
+  if f == "用户不吃辣" {
+   t.Errorf("被遗忘的事实仍能被 Recall 命中：%v", facts)
+  }
+ }
+ if got := len(s.vs.FindByMetadata("kind", "memory")); got != 1 {
+  t.Errorf("Forget 后库里剩 %d 条, want 1（误删了其他记忆？）", got)
+ }
 
-	// 模拟重启：从磁盘恢复后，被遗忘的事实依然不存在（删除已落盘）。
-	vs2 := vectorstore.NewStore()
-	if err := vs2.Load(path); err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	s2 := NewStore(vs2, s.emb, path)
-	facts, err = s2.Recall("饮食偏好", 3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range facts {
-		if f == "用户不吃辣" {
-			t.Errorf("重启后被遗忘的事实复活了（删除未落盘）：%v", facts)
-		}
-	}
+ // 模拟重启：从磁盘恢复后，被遗忘的事实依然不存在（删除已落盘）。
+ vs2 := vectorstore.NewStore()
+ if err := vs2.Load(path); err != nil {
+  t.Fatalf("Load: %v", err)
+ }
+ s2 := NewStore(vs2, s.emb, path)
+ facts, err = s2.Recall("饮食偏好", 3)
+ if err != nil {
+  t.Fatal(err)
+ }
+ for _, f := range facts {
+  if f == "用户不吃辣" {
+   t.Errorf("重启后被遗忘的事实复活了（删除未落盘）：%v", facts)
+  }
+ }
 }
 
 // TestForget_NoSimilarMemoryReturnsZero 验证安全闸：
 // query 与库中所有记忆都不足够相似（得分 < 阈值）时，返回 0 且一条都不删。
 func TestForget_NoSimilarMemoryReturnsZero(t *testing.T) {
-	s, _ := newForgetTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
+ s, _ := newForgetTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
 
-	if err := s.Remember("用户不吃辣"); err != nil {
-		t.Fatal(err)
-	}
-	// "火星气候" 走 defaultVec，与 "用户不吃辣" 的余弦约 0.707 < 0.9。
-	n, err := s.Forget("火星气候")
-	if err != nil {
-		t.Fatalf("Forget: %v", err)
-	}
-	if n != 0 {
-		t.Errorf("Forget 返回 %d, want 0（不相似的记忆不应被删）", n)
-	}
-	if got := len(s.vs.FindByMetadata("kind", "memory")); got != 1 {
-		t.Errorf("不相似的 Forget 删除了记忆：剩 %d 条, want 1", got)
-	}
+ if err := s.Remember("用户不吃辣"); err != nil {
+  t.Fatal(err)
+ }
+ // "火星气候" 走 defaultVec，与 "用户不吃辣" 的余弦约 0.707 < 0.9。
+ n, err := s.Forget("火星气候")
+ if err != nil {
+  t.Fatalf("Forget: %v", err)
+ }
+ if n != 0 {
+  t.Errorf("Forget 返回 %d, want 0（不相似的记忆不应被删）", n)
+ }
+ if got := len(s.vs.FindByMetadata("kind", "memory")); got != 1 {
+  t.Errorf("不相似的 Forget 删除了记忆：剩 %d 条, want 1", got)
+ }
 }
 
 // TestForget_EdgeCases 空 query 报错；空库返回 0 不报错、不调 embedding。
 func TestForget_EdgeCases(t *testing.T) {
-	s, emb := newForgetTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
+ s, emb := newForgetTestStore(t, filepath.Join(t.TempDir(), "memory.json"))
 
-	if _, err := s.Forget("   "); err == nil {
-		t.Error("blank query: want error, got nil")
-	}
-	n, err := s.Forget("随便忘点什么")
-	if err != nil || n != 0 {
-		t.Errorf("空库 Forget = (%d, %v), want (0, nil)", n, err)
-	}
-	if emb.calls != 0 {
-		t.Errorf("空库 Forget 调了 %d 次 embedding（应短路）", emb.calls)
-	}
+ if _, err := s.Forget("   "); err == nil {
+  t.Error("blank query: want error, got nil")
+ }
+ n, err := s.Forget("随便忘点什么")
+ if err != nil || n != 0 {
+  t.Errorf("空库 Forget = (%d, %v), want (0, nil)", n, err)
+ }
+ if emb.calls != 0 {
+  t.Errorf("空库 Forget 调了 %d 次 embedding（应短路）", emb.calls)
+ }
 }
 ```
 
@@ -703,6 +703,6 @@ go test ./internal/vectorstore/ -v    # 3 个新增测试全 PASS（FindByMetada
 - [x] main.go 注册成功，端到端走通："记住我不吃辣" → 重启 → "我喜欢吃什么"模型先调 memory_recall 再回答
 - [x] `go vet ./...` 和 `go test ./internal/memory/` 全绿
 - [x] 能口头回答：长期 memory 与 RAG 的异同？为什么选"模型主动调工具"而不是"每轮自动检索"？记忆去重/遗忘为什么难？
-- [ ] （进阶）Remember 精确文本去重：重复事实只存一条、第二次不调 embedding；语义相近但文本不同的事实（"不吃辣"/"现在吃辣了"）两条都保留
-- [ ] （进阶）`Forget(query)`：top-1 得分达高阈值（0.9）才删并立即落盘；不相似返回 0 一条不动；空库短路、空 query 报错
-- [ ] （进阶）能讲清取舍：为什么去重只做精确匹配（语义去重会把"事实更新"误判为重复）？为什么遗忘阈值比检索阈值高得多（top-1 永远存在，误删不可逆）？
+- [x] （进阶）Remember 精确文本去重：重复事实只存一条、第二次不调 embedding；语义相近但文本不同的事实（"不吃辣"/"现在吃辣了"）两条都保留
+- [x] （进阶）`Forget(query)`：top-1 得分达高阈值（0.9）才删并立即落盘；不相似返回 0 一条不动；空库短路、空 query 报错
+- [x] （进阶）能讲清取舍：为什么去重只做精确匹配（语义去重会把"事实更新"误判为重复）？为什么遗忘阈值比检索阈值高得多（top-1 永远存在，误删不可逆）？

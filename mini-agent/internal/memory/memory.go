@@ -28,10 +28,12 @@
 package memory
 
 import (
-	"errors"
-
+	"encoding/json"
+	"fmt"
 	"mini-agent/internal/tools"
 	"mini-agent/internal/vectorstore"
+	"strings"
+	"time"
 )
 
 // Embedder 是 memory 包对"文本 → 向量"能力的最小依赖。
@@ -89,7 +91,43 @@ var (
 //
 // 参考答案：docs/solutions/stage-02/exercise-5-memory-tools.md（完成后再看）
 func (s *Store) Remember(fact string) error {
-	return errors.New("memory: Remember TODO 未实现")
+	fact = strings.TrimSpace(fact)
+	if fact == "" {
+		return fmt.Errorf("memory: empty fact")
+	}
+
+	// 精确文本去重（进阶）：逐条比对已有记忆的 Text，完全相同则跳过。
+	// 刻意不做语义级去重（相似度阈值判重）："用户不吃辣"和"用户现在吃辣了"
+	// 语义高度相似但含义相反，语义去重会把这类"更新"误判为重复而丢弃，
+	// 或者更糟——把旧事实删掉。宁可选保守的精确匹配（漏掉措辞不同的重复，
+	// 代价只是多占一个 top-k 名额），也不冒误删真实信息的风险。
+	for _, d := range s.vs.FindByMetadata("kind", "memory") {
+		if d.Text == fact {
+			return nil
+		}
+	}
+
+	vecs, err := s.emb.Embed([]string{fact})
+	if err != nil {
+		return fmt.Errorf("memory: embed fact: %w", err)
+	}
+
+	doc := vectorstore.Document{
+		ID:       fmt.Sprintf("mem-%d", time.Now().Nanosecond()),
+		Text:     fact,
+		Vector:   vecs[0],
+		Metadata: map[string]string{"kind": "memory"},
+	}
+
+	if err := s.vs.Add(doc); err != nil {
+		return fmt.Errorf("memory: add fact: %w", err)
+	}
+
+	if err := s.vs.Save(s.path); err != nil {
+		return fmt.Errorf("memory: persist: %w", err)
+	}
+
+	return nil
 }
 
 // TODO(练习5): 检索式回忆 Recall
@@ -115,7 +153,66 @@ func (s *Store) Remember(fact string) error {
 //
 // 参考答案：docs/solutions/stage-02/exercise-5-memory-tools.md（完成后再看）
 func (s *Store) Recall(query string, topK int) ([]string, error) {
-	return nil, errors.New("memory: Recall TODO 未实现")
+	if topK <= 0 {
+		topK = 3
+	}
+
+	vecs, err := s.emb.Embed([]string{query})
+	if err != nil {
+		return nil, fmt.Errorf("memory: embed query: %w", err)
+	}
+
+	hits, err := s.vs.Search(vecs[0], topK)
+	if err != nil {
+		return nil, fmt.Errorf("memory: search: %w", err)
+	}
+
+	facts := make([]string, 0, len(hits))
+	for _, h := range hits {
+		facts = append(facts, h.Doc.Text)
+	}
+
+	return facts, nil
+}
+
+// forgetMinScore 是"允许遗忘"的最低相似度（进阶）。
+//
+// 为什么遗忘要设高阈值：检索是"找最相似的"，哪怕库里的记忆全与 query
+// 无关，top-1 也永远存在——不设阈值的话，Forget("火星气候") 会把
+// 最无辜的一条记忆删掉。删除是不可逆的破坏操作，所以阈值定得很高
+// （0.9，接近"就是这条"），拿不准就不删，返回 0 让调用方如实告知。
+const forgetMinScore = 0.9
+
+func (s *Store) Forget(query string) (int, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return 0, fmt.Errorf("memory: empty query")
+	}
+
+	if s.vs.Len() == 0 {
+		return 0, nil
+	}
+
+	vecs, err := s.emb.Embed([]string{query})
+	if err != nil {
+		return 0, fmt.Errorf("memory: embed query: %w", err)
+	}
+
+	hits, err := s.vs.Search(vecs[0], 1)
+	if err != nil {
+		return 0, fmt.Errorf("memory: search: %w", err)
+	}
+
+	if len(hits) == 0 || hits[0].Score < forgetMinScore {
+		return 0, nil
+	}
+
+	s.vs.Delete(hits[0].Doc.ID)
+	if err := s.vs.Save(s.path); err != nil {
+		return 0, fmt.Errorf("memory: persist: %w", err)
+	}
+
+	return 1, nil
 }
 
 // MemorySave 是给模型用的"记住"工具（说明书由 AI 写全，Execute 是练习）。
@@ -184,12 +281,15 @@ func (t MemoryRecall) ParametersSchema() map[string]any {
 // TODO(练习5): 两个工具的 Execute + 注册到 agent
 //
 // 【任务】
+//
 //  1. 实现 MemorySave.Execute：json.Unmarshal 解析 {"fact": "..."} →
 //     调用 Store.Remember → 成功时返回确认文本（如 "已记住：xxx"）。
+//
 //  2. 实现 MemoryRecall.Execute：解析 {"query": "...", "top_k": N} →
 //     调用 Store.Recall → 把事实列表编号拼成多行文本返回；
 //     结果为空时返回"没有找到相关记忆。"（一句明确的否定结果比空字符串
 //     更利于模型继续推理——空串会让模型分不清"没查到"和"工具坏了"）。
+//
 //  3. 在 cmd/agent/main.go 注册两个工具（本练习不改 main.go，由你完成）：
 //
 //     memStore := memory.NewStore(vectorstore.NewStore(), embClient, "memory.json")
@@ -214,10 +314,46 @@ func (t MemoryRecall) ParametersSchema() map[string]any {
 //
 // 参考答案：docs/solutions/stage-02/exercise-5-memory-tools.md（完成后再看）
 func (t MemorySave) Execute(args string) (string, error) {
-	return "", errors.New("memory: MemorySave.Execute TODO 未实现")
+	var p struct {
+		Fact string `json:"fact"`
+	}
+
+	if err := json.Unmarshal([]byte(args), &p); err != nil {
+		return "", fmt.Errorf("memory_save: invalid arguments %q: %w", args, err)
+	}
+
+	if err := t.Store.Remember(p.Fact); err != nil {
+		return "", err
+	}
+
+	return "已记住：" + strings.TrimSpace(p.Fact), nil
 }
 
 // Execute 见上方 TODO(练习5) 块。
 func (t MemoryRecall) Execute(args string) (string, error) {
-	return "", errors.New("memory: MemoryRecall.Execute TODO 未实现")
+	var p struct {
+		Query string `json:"query"`
+		TopK  int    `json:"top_k"`
+	}
+
+	if err := json.Unmarshal([]byte(args), &p); err != nil {
+		return "", fmt.Errorf("memory_recall: invalid arguments %q: %w", args, err)
+	}
+
+	facts, err := t.Store.Recall(p.Query, p.TopK)
+	if err != nil {
+		return "", err
+	}
+
+	if len(facts) == 0 {
+		return "没有找到相关记忆", nil
+	}
+
+	var b strings.Builder
+	b.WriteString("检索到以下相关记忆: \n")
+	for i, f := range facts {
+		fmt.Fprintf(&b, "%d. %s\n", i+1, f)
+	}
+
+	return b.String(), nil
 }
