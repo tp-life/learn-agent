@@ -280,3 +280,103 @@ func TestSave_AtomicWrite(t *testing.T) {
 		t.Errorf("leftover temp files: %v", leftover)
 	}
 }
+
+func newMetaStore(t *testing.T) *Store {
+	t.Helper()
+	s := NewStore()
+
+	err := s.Add(
+		Document{
+			ID: "a", Text: "x 第一块", Vector: []float32{1, 0},
+			Metadata: map[string]string{"source": "x.md", "chunk": "0"},
+		},
+		Document{
+			ID: "b", Text: "x 第二块", Vector: []float32{0, 1},
+			Metadata: map[string]string{"source": "x.md", "chunk": "1"},
+		},
+		Document{
+			ID: "c", Text: "y 第一块", Vector: []float32{1, 1},
+			Metadata: map[string]string{"source": "y.md", "chunk": "0"},
+		},
+		Document{ID: "d", Text: "无元数据", Vector: []float32{2, 1}},
+	)
+	if err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	return s
+}
+
+func TestFindByMetadata(t *testing.T) {
+	s := newMetaStore(t)
+	got := s.FindByMetadata("source", "x.md")
+	if len(got) != 2 || got[0].ID != "a" || got[1].ID != "b" {
+		t.Errorf(`FindByMetadata("source", "x.md") = %v, want [a b]（按入库序）`, ids(got))
+	}
+
+	if got := s.FindByMetadata("source", "z.md"); len(got) != 0 {
+		t.Errorf("不存在的source返回%d条，want 0", len(got))
+	}
+
+	if got := s.FindByMetadata("source", ""); len(got) != 0 {
+		t.Errorf(`FindTestFindByMetadata("source", "") 匹配到%v （nil metadata 被误判）`, ids(got))
+	}
+}
+
+func ids(docs []Document) []string {
+	out := make([]string, len(docs))
+	for i, d := range docs {
+		out[i] = d.ID
+	}
+
+	return out
+}
+
+func TestDelete(t *testing.T) {
+	s := newMetaStore(t)
+
+	if !s.Delete("b") {
+		t.Fatal(`Delete("b) = false, want true`)
+	}
+
+	if s.Len() != 3 {
+		t.Fatalf("Len = %d, want 3", s.Len())
+	}
+
+	hits, err := s.Search([]float32{0, 1}, 4)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+
+	for _, h := range hits {
+		if h.Doc.ID == "b" {
+			t.Error("已删除的b仍然出现在检索的结果中")
+		}
+	}
+
+	if got := s.FindByMetadata("source", "x.md"); len(got) != 1 || got[0].ID != "a" {
+		t.Errorf("x.md 剩余文档 = %v, want [a]", ids(got))
+	}
+
+	if s.Delete("not-exist") {
+		t.Error(`Delete("not-exist") = true, want false`)
+	}
+
+	if s.Len() != 3 {
+		t.Errorf("删除不存在的ID后 Len = %d, want 3", s.Len())
+	}
+}
+
+func TestDelete_EmptyStoreResetsDim(t *testing.T) {
+	s := NewStore()
+	if err := s.Add(Document{ID: "a", Vector: []float32{1, 0}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if !s.Delete("a") {
+		t.Fatal(`Delete("a") = false`)
+	}
+
+	if err := s.Add(Document{ID: "b", Vector: []float32{1, 2, 3}}); err != nil {
+		t.Errorf("删空后add 3维文档报错： %v (dim 未归零)", err)
+	}
+}

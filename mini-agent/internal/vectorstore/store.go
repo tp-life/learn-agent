@@ -301,3 +301,27 @@ func (s *Store) Load(path string) error {
 	s.dim = dim
 	return nil
 }
+
+func (s *Store) FindByMetadata(key, value string) []Document {
+	var out []Document
+	for _, d := range s.docs {
+		if v, ok := d.Metadata[key]; ok && v == value {
+			out = append(out, d)
+		}
+	}
+
+	return out
+}
+
+func (s *Store) Delete(id string) bool {
+	for i, d := range s.docs {
+		if d.ID == id {
+			s.docs = append(s.docs[:i], s.docs[i+1:]...)
+			if len(s.docs) == 0 {
+				s.dim = 0
+			}
+			return true
+		}
+	}
+	return false
+}

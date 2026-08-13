@@ -6,9 +6,10 @@
 package rag
 
 import (
-	"errors"
-
+	"encoding/json"
+	"fmt"
 	"mini-agent/internal/vectorstore"
+	"strings"
 )
 
 // kbSearchArgs 是 kb_search 的参数结构，与 ParametersSchema 一一对应。
@@ -112,6 +113,50 @@ func (t *KBSearch) ParametersSchema() map[string]any {
 // 空库文案、低分过滤文案）。
 //
 // 参考答案：docs/solutions/stage-02/exercise-4-rag-tool.md（完成后再看）
+
+const minScore = 0.3
+
 func (t *KBSearch) Execute(args string) (string, error) {
-	return "", errors.New("rag: KBSearch.Execute TODO 未实现：见上方 TODO(练习4) 块")
+	var in kbSearchArgs
+	if err := json.Unmarshal([]byte(args), &in); err != nil {
+		return "", fmt.Errorf("invalid tool arguments %q:%w", args, err)
+	}
+
+	in.Query = strings.TrimSpace(in.Query)
+	if in.Query == "" {
+		return "", fmt.Errorf("kb_search: query is empty")
+	}
+
+	if t.store.Len() == 0 {
+		return "知识库当中没有相关内容(知识库为空，请先使用learn收录文档) ", nil
+	}
+
+	vecs, err := t.embedder.Embed([]string{in.Query})
+	if err != nil {
+		return "", fmt.Errorf("kb_search: embed query: %w", err)
+	}
+
+	hits, err := t.store.Search(vecs[0], t.topK)
+	if err != nil {
+		return "", fmt.Errorf("kb_search: search: %w", err)
+	}
+
+	var relevant []vectorstore.Hit
+	for _, h := range hits {
+		if h.Score >= minScore {
+			relevant = append(relevant, h)
+		}
+	}
+
+	if len(relevant) == 0 {
+		return "知识库中没有相关内容° 请如实告知用户知识库未覆盖该问题，不要凭自身知识编造来源° ", nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString("以下是从知识库检索到的相关内容（请在回答中用[编号] 标注引用来源）：\n")
+	for i, h := range relevant {
+		fmt.Fprintf(&sb, "\n[%d]（来源：%s, 相似度 %.2f）\n%s\n", i+1, h.Doc.Metadata["source"], h.Score, h.Doc.Text)
+	}
+
+	return strings.TrimRight(sb.String(), "\n"), nil
 }

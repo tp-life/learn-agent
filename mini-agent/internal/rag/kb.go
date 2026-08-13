@@ -11,9 +11,10 @@
 package rag
 
 import (
-	"errors"
-
+	"fmt"
 	"mini-agent/internal/vectorstore"
+	"strconv"
+	"strings"
 )
 
 // Embedder 是"把一批文本翻译成向量"的能力抽象。
@@ -91,5 +92,63 @@ func (kb *KnowledgeBase) Store() *vectorstore.Store {
 //
 // 参考答案：docs/solutions/stage-02/exercise-4-rag-tool.md（完成后再看）
 func (kb *KnowledgeBase) Ingest(source, text string) (int, error) {
-	return 0, errors.New("rag: Ingest TODO 未实现：见上方 TODO(练习4) 块")
+	if strings.TrimSpace(source) == "" {
+		return 0, fmt.Errorf("rag: source is empty")
+	}
+
+	chunks := Chunk(text, kb.opts)
+	if len(chunks) == 0 {
+		return 0, fmt.Errorf("rag: %s produced no chunks (empty or blank document)", source)
+	}
+
+	existing := kb.store.FindByMetadata("source", source)
+	if sameChunks(existing, chunks) {
+		return 0, nil
+	}
+
+	// 批量embedding
+	vectors, err := kb.embedder.Embed(chunks)
+	if err != nil {
+		return 0, fmt.Errorf("rag: embed chunks of %s: %w", source, err)
+	}
+
+	if len(vectors) != len(chunks) {
+		return 0, fmt.Errorf("rag: embedder returned %d vectors for %d chunks", len(vectors), len(chunks))
+	}
+
+	docs := make([]vectorstore.Document, len(chunks))
+
+	for i, c := range chunks {
+		docs[i] = vectorstore.Document{
+			ID:     fmt.Sprintf("%s#%d", source, i),
+			Text:   c,
+			Vector: vectors[i],
+			Metadata: map[string]string{
+				"source": source,
+				"chunk":  strconv.Itoa(i),
+			},
+		}
+	}
+
+	for _, old := range existing {
+		kb.Store().Delete(old.ID)
+	}
+
+	if err := kb.store.Add(docs...); err != nil {
+		return 0, fmt.Errorf("rag: add chunks of %s:%w", source, err)
+	}
+	return len(docs), nil
+}
+
+func sameChunks(existing []vectorstore.Document, chunks []string) bool {
+	if len(existing) != len(chunks) {
+		return false
+	}
+
+	for i, d := range existing {
+		if d.Text != chunks[i] {
+			return false
+		}
+	}
+	return true
 }
