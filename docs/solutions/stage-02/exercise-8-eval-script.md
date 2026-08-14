@@ -7,6 +7,7 @@
 >
 > 本文档代码已于 2026-08-06 实际粘贴进项目验证（同时临时套用了练习 6
 > 参考答案，因为建库依赖 chunk/embedTexts；验证后项目代码已全部恢复为骨架版）：
+>
 > - `pnpm build` 通过（Next.js 16.3.0，含 scripts/ 的类型检查）；
 > - `EMBEDDING_MOCK=1 pnpm eval --sample` 实测输出：
 >   - 8 个问题逐题打印期望源命中名次与 top-3 明细；
@@ -44,7 +45,9 @@ function checkInputs(ranked: string[][], expected: string[][]): void {
     throw new Error("metrics: empty input");
   }
   if (ranked.length !== expected.length) {
-    throw new Error(`metrics: ranked (${ranked.length}) vs expected (${expected.length}) length mismatch`);
+    throw new Error(
+      `metrics: ranked (${ranked.length}) vs expected (${expected.length}) length mismatch`,
+    );
   }
 }
 
@@ -55,7 +58,11 @@ function checkInputs(ranked: string[][], expected: string[][]): void {
  * expected[i]：第 i 个问题期望命中的来源文件名列表。
  * 返回 [0, 1]：期望来源至少有一个出现在前 k 名的问题占比。
  */
-export function recallAtK(ranked: string[][], expected: string[][], k: number): number {
+export function recallAtK(
+  ranked: string[][],
+  expected: string[][],
+  k: number,
+): number {
   checkInputs(ranked, expected);
   if (!Number.isInteger(k) || k <= 0) {
     throw new Error(`recallAtK: k must be a positive integer, got ${k}`);
@@ -130,17 +137,17 @@ export function mrr(ranked: string[][], expected: string[][]): number {
 
 完成后逐条自评（不要求与答案一字不差，覆盖条目即可）：
 
-- [ ] recall@k：前 k 名判定用 `slice(0, k)`；命中语义是"期望源至少一个
+- [x] recall@k：前 k 名判定用 `slice(0, k)`；命中语义是"期望源至少一个
       在前 k"；返回命中问题数 / 总问题数
-- [ ] MRR：取第一个正确结果的名次，贡献 `1/(rank+1)`（rank 从 0 开始要 +1），
+- [x] MRR：取第一个正确结果的名次，贡献 `1/(rank+1)`（rank 从 0 开始要 +1），
       未命中贡献 0，返回平均值
-- [ ] 两个函数对空输入、长度不符、k<=0 都显式报错，而不是返回貌似合理的数字
-- [ ] 理解 ranked 列表已按"来源文档"去重（同一文档多块只保留最高名次）
-- [ ] `pnpm build` 通过；`EMBEDDING_MOCK=1 pnpm eval --sample` 输出
+- [x] 两个函数对空输入、长度不符、k<=0 都显式报错，而不是返回貌似合理的数字
+- [x] 理解 ranked 列表已按"来源文档"去重（同一文档多块只保留最高名次）
+- [x] `pnpm build` 通过；`EMBEDDING_MOCK=1 pnpm eval --sample` 输出
       recall@3 / MRR 数字与 bad case 清单，连跑两次数字一致
-- [ ] （可选但推荐）把 dataset.jsonl 扩充到 20+ 条：同义改写、字面查询
+- [x] （可选但推荐）把 dataset.jsonl 扩充到 20+ 条：同义改写、字面查询
       （如"bge-m3 多少维"）、库外问题（期望应该是"不命中"——想想这种题
       怎么进测试集、指标要不要改）
-- [ ] 能口头回答：recall 低和"recall 高 MRR 低"各自指向什么修法？
+- [x] 能口头回答：recall 低和"recall 高 MRR 低"各自指向什么修法？
       为什么 MRR 对后续结果不敏感是特性而不是缺陷？mock 下的指标数字
       能说明什么、不能说明什么？

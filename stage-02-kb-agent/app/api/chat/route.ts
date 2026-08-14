@@ -36,6 +36,9 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { MockLanguageModelV3, simulateReadableStream } from "ai/test";
 import { NextResponse } from "next/server";
 import type { KbUIMessage, SourceItem } from "@/lib/chat-types";
+import { error } from "node:console";
+import { getKbStore } from "@/lib/kb";
+import { embedTexts } from "@/lib/embed";
 
 /**
  * DeepSeek 走 OpenAI 兼容协议：createOpenAI 换个 baseURL 即可。
@@ -197,13 +200,58 @@ export async function POST(req: Request) {
   //   上传文档后提问，回答应基于文档内容并带 [N] 编号。
   //
   // 参考答案：docs/solutions/stage-02/exercise-7-chat-ui.md（完成后再看）
-  let system = PLACEHOLDER_SYSTEM;
-  let sources: SourceItem[] = [];
-  if (chatMock) {
-    sources = CANNED_SOURCES; // 骨架期占位：罐装引用，实现 TODO① 后删除本分支
-  }
 
   // —— 以下为骨架已实现部分：选模型 + 流式响应管线 ——
+
+  const last = messages[messages.length - 1];
+  if (last.role !== "user") {
+    return NextResponse.json(
+      { error: "最后一条消息必须是 user" },
+      { status: 400 },
+    );
+  }
+
+  const query = last.parts
+    .filter((p) => p.type === "text")
+    .map((p) => p.text)
+    .join("\n")
+    .trim();
+  if (query === "") {
+    return NextResponse.json(
+      { error: "用户消息没有文本内容" },
+      { status: 400 },
+    );
+  }
+
+  let system: string;
+  let sources: SourceItem[] = [];
+  const store = getKbStore();
+
+  if (store.size === 0) {
+    system = NO_KB_SYSTEM;
+  } else {
+    try {
+      const [queryVector] = await embedTexts([query]);
+      const hits = store.search(queryVector, TOP_K);
+
+      sources = hits.map((h) => ({
+        id: h.doc.id,
+        source: h.doc.metadata.source ?? h.doc.id,
+        chunk: h.doc.metadata.chunk ?? "?",
+        text: h.doc.text,
+        score: h.score,
+      }));
+
+      system = buildRagSystemPrompt(sources);
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error: `检索失败: ${err instanceof Error ? err.message : String(err)}`,
+        },
+        { status: 500 },
+      );
+    }
+  }
 
   // mock 只替换模型这一层；真实模式缺 key 时尽早报错，别等流开始了才挂。
   let model: LanguageModel;

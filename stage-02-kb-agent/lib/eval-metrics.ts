@@ -9,6 +9,18 @@
  * 练习：本模块的两个函数都是 TODO(练习8)，由用户实现。
  */
 
+function checkInputs(ranked: string[][], expected: string[][]): void {
+  if (ranked.length === 0) {
+    throw new Error("metrics: empty");
+  }
+
+  if (ranked.length !== expected.length) {
+    throw new Error(
+      `metrics: ranked (${ranked.length}) vs expected (${expected.length}) length mismatch`,
+    );
+  }
+}
+
 /**
  * TODO(练习8): recall@k —— 期望来源是否进入检索结果前 k 名
  *
@@ -35,10 +47,26 @@
  *
  * 参考答案：docs/solutions/stage-02/exercise-8-eval-script.md（完成后再看）
  */
-export function recallAtK(ranked: string[][], expected: string[][], k: number): number {
-  throw new Error(
-    `recallAtK: TODO(练习8) 未实现（got ${ranked.length} questions, k=${k}, expected ${expected.length}）`
-  );
+export function recallAtK(
+  ranked: string[][],
+  expected: string[][],
+  k: number,
+): number {
+  checkInputs(ranked, expected);
+  if (!Number.isInteger(k) || k <= 0) {
+    throw new Error(`recallAtK: k must be a positive integer, got ${k}`);
+  }
+
+  let hit = 0;
+
+  for (let i = 0; i < ranked.length; i++) {
+    const topK = new Set(ranked[i].slice(0, k));
+    if (expected[i].some((s) => topK.has(s))) {
+      hit++;
+    }
+  }
+
+  return hit / ranked.length;
 }
 
 /**
@@ -67,5 +95,14 @@ export function recallAtK(ranked: string[][], expected: string[][], k: number): 
  * 参考答案：docs/solutions/stage-02/exercise-8-eval-script.md（完成后再看）
  */
 export function mrr(ranked: string[][], expected: string[][]): number {
-  throw new Error(`mrr: TODO(练习8) 未实现（got ${ranked.length} questions, expected ${expected.length}）`);
+  checkInputs(ranked, expected);
+  let sum = 0;
+  for (let i = 0; i < ranked.length; i++) {
+    const rank = ranked[i].findIndex((s) => expected[i].includes(s));
+    if (rank >= 0) {
+      sum += 1 / (rank + 1);
+    }
+  }
+
+  return sum / ranked.length;
 }
