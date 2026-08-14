@@ -58,8 +58,101 @@ export const BGE_M3_DIMENSIONS = 1024;
 // 【验收】EMBEDDING_MOCK=1 时无需任何 key，curl 上传样例文档（见
 // app/api/ingest/route.ts 的 TODO 验收）全链路跑通；有真实
 // SILICONFLOW_API_KEY 时关掉 mock 再跑一次，返回的向量应为 1024 维。
-//
+
+const SILICONFLOW_EMBEDDINGS_URL = "https://api.siliconflow.cn/v1/embedding";
+const EMBEDDING_MODEL = "BAAI/bge-m3";
+
 // 参考答案：docs/solutions/stage-02/exercise-6-ingest-pipeline.md（完成后再看）
 export async function embedTexts(texts: string[]): Promise<number[][]> {
-  throw new Error("embedTexts: TODO(练习6) 未实现，见本函数上方注释");
+  if (texts.length === 0) {
+    throw new Error("embed: empty input");
+  }
+
+  for (let i = 0; i < texts.length; i++) {
+    if (texts[i].trim() === "") {
+      throw new Error(`embed: texts[${i}] is empty`);
+    }
+  }
+
+  if (process.env.EMBEDDING_MOCK === "1") {
+    return texts.map(mockEmbedding);
+  }
+
+  const apiKey = process.env.SILICONFLOW_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "embed: SILICONFLOW_API_KEY 未设置 （没有 key 时可设 EMBEDDING_MOCK =1 走 mock 路径）",
+    );
+  }
+
+  const resp = await fetch(SILICONFLOW_EMBEDDINGS_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({ model: EMBEDDING_MODEL, input: texts }),
+  });
+
+  if (!resp.ok) {
+    throw new Error(`embed: HTTP ${resp.status}: ${await resp.text()}`);
+  }
+
+  const json = (await resp.json()) as {
+    data?: { index: number; embedding: number[] }[];
+  };
+
+  const data = json.data ?? [];
+  if (data.length !== texts.length) {
+    throw new Error(
+      `embed: got ${data.length} embeddings for ${texts.length} texts`,
+    );
+  }
+
+  const result: number[][] = new Array(texts.length);
+  for (const d of data) {
+    if (d.index < 0 || d.index >= texts.length) {
+      throw new Error(
+        `embed: index ${d.index} out of range [0, ${texts.length}]`,
+      );
+    }
+
+    if (d.embedding.length !== BGE_M3_DIMENSIONS) {
+      throw new Error(
+        `embed: texts[${d.index}] dim = ${d.embedding.length}, want ${BGE_M3_DIMENSIONS} `,
+      );
+    }
+
+    result[d.index] = d.embedding;
+  }
+
+  for (let i = 0; i < result.length; i++) {
+    if (!result[i]) {
+      throw new Error(`embed: texts[${i}] missing in response`);
+    }
+  }
+
+  return result;
+}
+
+function mockEmbedding(text: string): number[] {
+  let seed = 2166136261;
+  for (const ch of text) {
+    seed ^= ch.codePointAt(0)!;
+    seed = Math.imul(seed, 16777619);
+  }
+
+  let s = seed >>> 0;
+  if (s === 0) {
+    s = 0x9e3779b9;
+  }
+
+  const v: number[] = [];
+  for (let i = 0; i < BGE_M3_DIMENSIONS; i++) {
+    s ^= s << 13;
+    s ^= s >>> 17;
+    s ^= s << 5;
+    v.push(((s >>> 0) / 0x100000000) * 2 - 1);
+  }
+  return v;
 }

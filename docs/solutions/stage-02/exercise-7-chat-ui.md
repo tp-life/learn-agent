@@ -6,6 +6,7 @@
 >
 > 本文档代码已于 2026-08-06 实际粘贴进项目验证（同时临时套用了练习 6 参考答案，
 > 因为检索依赖 embedTexts；验证后项目代码已全部恢复为骨架版）：
+>
 > - `pnpm build` 通过（Next.js 16.3.0，生产构建含类型检查全绿）；
 > - `EMBEDDING_MOCK=1 CHAT_MOCK=1 pnpm dev` 实测：
 >   - `curl -F "file=@sample.md" localhost:3100/api/ingest`（练习 6 管线）
@@ -56,7 +57,9 @@ const NO_KB_SYSTEM =
  */
 function buildRagSystemPrompt(sources: SourceItem[]): string {
   const blocks = sources
-    .map((s, i) => `[${i + 1}]（来源：${s.source} 第 ${s.chunk} 块）\n${s.text}`)
+    .map(
+      (s, i) => `[${i + 1}]（来源：${s.source} 第 ${s.chunk} 块）\n${s.text}`,
+    )
     .join("\n\n");
   return [
     "你是一个知识库问答助手。下面是按相关度排序的检索资料，编号即引用编号。",
@@ -74,50 +77,55 @@ function buildRagSystemPrompt(sources: SourceItem[]): string {
 **③ `TODO(练习7)` 块（含 `let system = PLACEHOLDER_SYSTEM; ... if (chatMock) {...}`）整段替换为：**
 
 ```ts
-  // —— 检索 → 组装 system prompt（RAG 查询路径核心）——
+// —— 检索 → 组装 system prompt（RAG 查询路径核心）——
 
-  // 取最后一轮 user query：UIMessage 的文本在 parts 里，不是顶层字段。
-  const last = messages[messages.length - 1];
-  if (last.role !== "user") {
-    return NextResponse.json({ error: "最后一条消息必须是 user" }, { status: 400 });
-  }
-  const query = last.parts
-    .filter((p) => p.type === "text")
-    .map((p) => p.text)
-    .join("\n")
-    .trim();
-  if (query === "") {
-    return NextResponse.json({ error: "用户消息没有文本内容" }, { status: 400 });
-  }
+// 取最后一轮 user query：UIMessage 的文本在 parts 里，不是顶层字段。
+const last = messages[messages.length - 1];
+if (last.role !== "user") {
+  return NextResponse.json(
+    { error: "最后一条消息必须是 user" },
+    { status: 400 },
+  );
+}
+const query = last.parts
+  .filter((p) => p.type === "text")
+  .map((p) => p.text)
+  .join("\n")
+  .trim();
+if (query === "") {
+  return NextResponse.json({ error: "用户消息没有文本内容" }, { status: 400 });
+}
 
-  let system: string;
-  let sources: SourceItem[] = [];
-  const store = getKbStore();
-  if (store.size === 0) {
-    // "没有资料"不是错误：换一条如实说明的 prompt，让模型回答"不知道"。
-    system = NO_KB_SYSTEM;
-  } else {
-    try {
-      // 写入和查询用同一个 embedding 模型（lib/embed.ts 保证），向量空间才对齐。
-      const [queryVector] = await embedTexts([query]);
-      const hits = store.search(queryVector, TOP_K);
-      // sources 的顺序 = hits 的顺序 = prompt 里 [N] 的编号顺序，三处同源。
-      sources = hits.map((h) => ({
-        id: h.doc.id,
-        source: h.doc.metadata.source ?? h.doc.id,
-        chunk: h.doc.metadata.chunk ?? "?",
-        text: h.doc.text,
-        score: h.score,
-      }));
-      system = buildRagSystemPrompt(sources);
-    } catch (err) {
-      // 检索失败（embedding 网络/鉴权等）：带错误信息的 500，而不是裸错误。
-      return NextResponse.json(
-        { error: `检索失败：${err instanceof Error ? err.message : String(err)}` },
-        { status: 500 }
-      );
-    }
+let system: string;
+let sources: SourceItem[] = [];
+const store = getKbStore();
+if (store.size === 0) {
+  // "没有资料"不是错误：换一条如实说明的 prompt，让模型回答"不知道"。
+  system = NO_KB_SYSTEM;
+} else {
+  try {
+    // 写入和查询用同一个 embedding 模型（lib/embed.ts 保证），向量空间才对齐。
+    const [queryVector] = await embedTexts([query]);
+    const hits = store.search(queryVector, TOP_K);
+    // sources 的顺序 = hits 的顺序 = prompt 里 [N] 的编号顺序，三处同源。
+    sources = hits.map((h) => ({
+      id: h.doc.id,
+      source: h.doc.metadata.source ?? h.doc.id,
+      chunk: h.doc.metadata.chunk ?? "?",
+      text: h.doc.text,
+      score: h.score,
+    }));
+    system = buildRagSystemPrompt(sources);
+  } catch (err) {
+    // 检索失败（embedding 网络/鉴权等）：带错误信息的 500，而不是裸错误。
+    return NextResponse.json(
+      {
+        error: `检索失败：${err instanceof Error ? err.message : String(err)}`,
+      },
+      { status: 500 },
+    );
   }
+}
 ```
 
 ### `components/sources-card.tsx`（完整替换骨架，此处给出全文）
@@ -192,9 +200,12 @@ export function SourcesCard({ message }: { message: KbUIMessage }) {
               {/* 编号按数组顺序从 1 开始，与服务端 prompt 的 [N] 同源，
                   绝不按 score 重排——否则回答里的标注就对不上了。 */}
               <div style={{ fontWeight: 600 }}>
-                [{i + 1}] {s.source} · 第 {s.chunk} 块 · 相关度 {s.score.toFixed(3)}
+                [{i + 1}] {s.source} · 第 {s.chunk} 块 · 相关度{" "}
+                {s.score.toFixed(3)}
               </div>
-              <div style={{ color: "#555", whiteSpace: "pre-wrap", marginTop: 2 }}>
+              <div
+                style={{ color: "#555", whiteSpace: "pre-wrap", marginTop: 2 }}
+              >
                 {isOpen ? s.text : preview}
               </div>
             </div>
@@ -237,7 +248,7 @@ export function SourcesCard({ message }: { message: KbUIMessage }) {
    `CANNED_SOURCES` 只是让你在做完 TODO① 之前就能联调卡片，实现后必须删——
    留着它，mock 模式就测不到你的检索代码。
 
-6. ** `.chat()` vs 直接调用 provider**：`@ai-sdk/openai` 的 provider 默认走
+6. **`.chat()` vs 直接调用 provider**：`@ai-sdk/openai` 的 provider 默认走
    OpenAI Responses API，DeepSeek 只兼容 Chat Completions API，
    `deepseek.chat("deepseek-chat")` 显式选后者。接任何"OpenAI 兼容"的
    第三方服务都要先确认它兼容的是哪个 API。
@@ -246,19 +257,19 @@ export function SourcesCard({ message }: { message: KbUIMessage }) {
 
 完成后逐条自评（不要求与答案一字不差，覆盖条目即可）：
 
-- [ ] 从 `last.parts` 提取查询文本（不是 `last.content`）；最后一条非 user、
+- [x] 从 `last.parts` 提取查询文本（不是 `last.content`）；最后一条非 user、
       无文本内容都返回 400
-- [ ] 检索：embedTexts([query]) → `store.search(vector, TOP_K)`；
+- [x] 检索：embedTexts([query]) → `store.search(vector, TOP_K)`；
       检索异常被 try/catch 兜住返回带信息的 500
-- [ ] 空知识库不报错，走"没有资料"的 prompt 分支
-- [ ] system prompt 三要素齐全：资料块带 [N] 编号、"仅根据资料回答"、
+- [x] 空知识库不报错，走"没有资料"的 prompt 分支
+- [x] system prompt 三要素齐全：资料块带 [N] 编号、"仅根据资料回答"、
       "不足就说不知道"+ 标注来源编号
-- [ ] sources 数组顺序与 prompt 编号、卡片编号同源；卡片按数组顺序编号，
+- [x] sources 数组顺序与 prompt 编号、卡片编号同源；卡片按数组顺序编号，
       不按 score 重排
-- [ ] 引用卡片：编号 + 文件名 + 块序号 + 预览，点击展开/收起全文；
+- [x] 引用卡片：编号 + 文件名 + 块序号 + 预览，点击展开/收起全文；
       无 sources 时不渲染
-- [ ] 删除了骨架期的 CANNED_SOURCES 占位分支，CHAT_MOCK 下也走真实检索
-- [ ] `pnpm build` 通过；mock 模式下 curl /api/chat 看到 SSE 里
+- [x] 删除了骨架期的 CANNED_SOURCES 占位分支，CHAT_MOCK 下也走真实检索
+- [x] `pnpm build` 通过；mock 模式下 curl /api/chat 看到 SSE 里
       `data-sources` 先于 `text-delta` 到达
-- [ ] 能口头回答：为什么 sources 不让模型自己说？为什么空库不该 500？
+- [x] 能口头回答：为什么 sources 不让模型自己说？为什么空库不该 500？
       编号同源指什么？UIMessage 和 ModelMessage 的区别与转换时机？

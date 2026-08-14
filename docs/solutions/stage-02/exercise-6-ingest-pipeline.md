@@ -6,6 +6,7 @@
 > **完成练习并自评后再看本文档。**
 >
 > 本文档代码已于 2026-08-06 实际粘贴进项目验证（验证后项目代码已恢复为骨架版）：
+>
 > - `pnpm build` 通过（Next.js 16.3.0，生产构建含类型检查全绿）；
 > - `EMBEDDING_MOCK=1 pnpm dev` 启动后实测：
 >   - `curl -F "file=@sample.md" localhost:3000/api/ingest`（多段落中文 md）
@@ -47,7 +48,10 @@ export interface ChunkOptions {
  * 按字符而非 token 计数是简化（中文 1 字 ≈ 1-2 token，英文 1 词 ≈ 1-2 token），
  * 学习项目够用；生产环境会按 tokenizer 精确计数。
  */
-export const DEFAULT_CHUNK_OPTIONS: ChunkOptions = { maxChars: 400, overlapChars: 60 };
+export const DEFAULT_CHUNK_OPTIONS: ChunkOptions = {
+  maxChars: 400,
+  overlapChars: 60,
+};
 
 /**
  * codePoints 把字符串展开为码点数组。
@@ -217,7 +221,7 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
   const apiKey = process.env.SILICONFLOW_API_KEY;
   if (!apiKey) {
     throw new Error(
-      "embed: SILICONFLOW_API_KEY 未设置（没有 key 时可设 EMBEDDING_MOCK=1 走 mock 路径）"
+      "embed: SILICONFLOW_API_KEY 未设置（没有 key 时可设 EMBEDDING_MOCK=1 走 mock 路径）",
     );
   }
 
@@ -239,18 +243,22 @@ export async function embedTexts(texts: string[]): Promise<number[][]> {
   };
   const data = json.data ?? [];
   if (data.length !== texts.length) {
-    throw new Error(`embed: got ${data.length} embeddings for ${texts.length} texts`);
+    throw new Error(
+      `embed: got ${data.length} embeddings for ${texts.length} texts`,
+    );
   }
 
   // 按 index 归位，而不是按数组顺序（见函数 doc 注释）。
   const result: number[][] = new Array(texts.length);
   for (const d of data) {
     if (d.index < 0 || d.index >= texts.length) {
-      throw new Error(`embed: index ${d.index} out of range [0, ${texts.length})`);
+      throw new Error(
+        `embed: index ${d.index} out of range [0, ${texts.length})`,
+      );
     }
     if (d.embedding.length !== BGE_M3_DIMENSIONS) {
       throw new Error(
-        `embed: texts[${d.index}] dim = ${d.embedding.length}, want ${BGE_M3_DIMENSIONS}`
+        `embed: texts[${d.index}] dim = ${d.embedding.length}, want ${BGE_M3_DIMENSIONS}`,
       );
     }
     result[d.index] = d.embedding;
@@ -324,43 +332,43 @@ import type { Document } from "@/lib/vectorstore";
 `TODO(练习6)` 块（含 `void getKbStore;` 和 501 返回）整段替换为：
 
 ```ts
-  // —— 组装写入路径：chunk → embed → 入库 → 落盘 ——
+// —— 组装写入路径：chunk → embed → 入库 → 落盘 ——
 
-  const chunks = chunk(text);
-  if (chunks.length === 0) {
-    return NextResponse.json({ error: "文档切分结果为空" }, { status: 400 });
-  }
+const chunks = chunk(text);
+if (chunks.length === 0) {
+  return NextResponse.json({ error: "文档切分结果为空" }, { status: 400 });
+}
 
-  try {
-    const vectors = await embedTexts(chunks);
+try {
+  const vectors = await embedTexts(chunks);
 
-    const store = getKbStore();
-    // id 用 "文件名#块序号"：可读、可定位回来源块；
-    // metadata 带溯源信息，练习 7 的"可点击引用"全靠它。
-    const docs: Document[] = chunks.map((t, i) => ({
-      id: `${file.name}#${i}`,
-      text: t,
-      vector: vectors[i],
-      metadata: { source: file.name, chunk: String(i) },
-    }));
-    // add 是 all-or-nothing：任一文档校验失败整批 throw，库里不留中间状态。
-    store.add(...docs);
-    store.save(KB_PATH);
+  const store = getKbStore();
+  // id 用 "文件名#块序号"：可读、可定位回来源块；
+  // metadata 带溯源信息，练习 7 的"可点击引用"全靠它。
+  const docs: Document[] = chunks.map((t, i) => ({
+    id: `${file.name}#${i}`,
+    text: t,
+    vector: vectors[i],
+    metadata: { source: file.name, chunk: String(i) },
+  }));
+  // add 是 all-or-nothing：任一文档校验失败整批 throw，库里不留中间状态。
+  store.add(...docs);
+  store.save(KB_PATH);
 
-    return NextResponse.json({
-      ok: true,
-      file: file.name,
-      chunks: chunks.length,
-      total: store.size,
-    });
-  } catch (err) {
-    // embed 网络/鉴权失败、向量维度不符等都从这里兜住，
-    // 把错误信息带回给调用方（排错全靠它），而不是只给一个裸 500。
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : String(err) },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json({
+    ok: true,
+    file: file.name,
+    chunks: chunks.length,
+    total: store.size,
+  });
+} catch (err) {
+  // embed 网络/鉴权失败、向量维度不符等都从这里兜住，
+  // 把错误信息带回给调用方（排错全靠它），而不是只给一个裸 500。
+  return NextResponse.json(
+    { error: err instanceof Error ? err.message : String(err) },
+    { status: 500 },
+  );
+}
 ```
 
 ## 二、关键设计点
@@ -424,43 +432,47 @@ import { extractText } from "unpdf";
 **2. 扩展名白名单放行 .pdf**（替换基础版的白名单判断）：
 
 ```ts
-  // 扩展名白名单：md/txt 是纯文本，file.text() 直接读；pdf 走 unpdf 解析。
-  const isPdf = /\.pdf$/i.test(file.name);
-  if (!isPdf && !/\.(md|txt)$/i.test(file.name)) {
-    return NextResponse.json(
-      { error: `暂不支持的文件类型：${file.name}（目前只支持 .md / .txt / .pdf）` },
-      { status: 400 }
-    );
-  }
+// 扩展名白名单：md/txt 是纯文本，file.text() 直接读；pdf 走 unpdf 解析。
+const isPdf = /\.pdf$/i.test(file.name);
+if (!isPdf && !/\.(md|txt)$/i.test(file.name)) {
+  return NextResponse.json(
+    {
+      error: `暂不支持的文件类型：${file.name}（目前只支持 .md / .txt / .pdf）`,
+    },
+    { status: 400 },
+  );
+}
 ```
 
 **3. 文本提取分支**（替换基础版的 `const text = await file.text();`）：
 
 ```ts
-  // PDF 不能用 file.text()——那是按 UTF-8 解码字节流，
-  // 得到的是乱码而不是文档文字；必须走解析库。
-  let text: string;
-  if (isPdf) {
-    try {
-      const result = await extractText(new Uint8Array(await file.arrayBuffer()), {
-        mergePages: true, // 多页合并成一个字符串；默认按页返回 string[]
-      });
-      text = result.text;
-    } catch (err) {
-      // 解析失败（加密/损坏/非 PDF 内容改了扩展名）按 400 处理：
-      // 是客户端给了一个没法解析的文件，不是服务端故障。
-      return NextResponse.json(
-        { error: `PDF 解析失败：${err instanceof Error ? err.message : String(err)}` },
-        { status: 400 }
-      );
-    }
-  } else {
-    text = await file.text();
+// PDF 不能用 file.text()——那是按 UTF-8 解码字节流，
+// 得到的是乱码而不是文档文字；必须走解析库。
+let text: string;
+if (isPdf) {
+  try {
+    const result = await extractText(new Uint8Array(await file.arrayBuffer()), {
+      mergePages: true, // 多页合并成一个字符串；默认按页返回 string[]
+    });
+    text = result.text;
+  } catch (err) {
+    // 解析失败（加密/损坏/非 PDF 内容改了扩展名）按 400 处理：
+    // 是客户端给了一个没法解析的文件，不是服务端故障。
+    return NextResponse.json(
+      {
+        error: `PDF 解析失败：${err instanceof Error ? err.message : String(err)}`,
+      },
+      { status: 400 },
+    );
   }
-  if (text.trim() === "") {
-    // 扫描件（图片型 PDF）提取不出文字也会走到这里。
-    return NextResponse.json({ error: "文件内容为空" }, { status: 400 });
-  }
+} else {
+  text = await file.text();
+}
+if (text.trim() === "") {
+  // 扫描件（图片型 PDF）提取不出文字也会走到这里。
+  return NextResponse.json({ error: "文件内容为空" }, { status: 400 });
+}
 ```
 
 之后的 `chunk(text)` → `embedTexts(chunks)` → 入库 → 落盘与基础版
@@ -516,16 +528,16 @@ ASCII 文本——避免 CID 字体嵌入的复杂度）。
 
 完成后逐条自评（不要求与答案一字不差，覆盖条目即可）：
 
-- [ ] `chunk` 结构优先：按空行切段、trim 丢空段、贪心打包不拆散段落、`\n\n` 分隔符计入块长度
-- [ ] 超长段先 flush 再硬切；硬切相邻块重叠恰好 overlapChars（末尾块可例外）；去重叠拼接能还原原段落（覆盖性）
-- [ ] 所有长度判断与切片基于码点（`Array.from` / 展开 / `for..of`），含 emoji 的文档切完每个块 `isWellFormed()` 为 true
-- [ ] `overlapChars >= maxChars`、负数、缺省 options 都有防御，硬切不死循环
-- [ ] `embedTexts` 按响应 `index` 归位；index 越界、数量不符、维度 ≠ 1024、归位有空洞都报错
-- [ ] 响应非 200 时错误信息包含状态码与响应体
-- [ ] `EMBEDDING_MOCK=1` 路径不碰网络、无需 key，且**同一文本多次调用返回相同向量**（确定性）
-- [ ] ingest 组装：id 含来源信息、metadata 带 `{source, chunk}`、add/save 异常被兜住并返回带信息的 500、成功返回块数与库总量
-- [ ] `pnpm build` 通过；`EMBEDDING_MOCK=1 pnpm dev` 下 `curl -F "file=@sample.md" localhost:3000/api/ingest` 返回 `{"ok":true,...}` 且 `data/kb.json` 落盘
-- [ ] 能口头回答：JS 字符串为什么按 code unit 索引、emoji 为什么会被切坏？为什么 mock 必须确定性？为什么 embedding 响应要按 index 归位？chunk 太大/太小各自伤什么？
-- [ ] （进阶）PDF 分支：白名单放行 `.pdf`；用 `arrayBuffer()` + unpdf 提取文本（`mergePages: true`），解析失败返回带信息的 400 而非裸 500；提取出的文本与 md/txt 走**完全相同**的 chunk/embed/入库管线
-- [ ] （进阶）实测：手写或生成一个最小 PDF，`EMBEDDING_MOCK=1` 下 `curl -F` 上传返回 `{"ok":true,...}` 且 `data/kb.json` 中 text 是真实提取文字（非乱码）；伪装扩展名的坏文件被 400 兜住
-- [ ] （进阶）能口头回答：为什么不能 `file.text()` 读 PDF？pdf-parse 在 Next.js 打包下为什么 import 即崩、怎么绕？扫描件 PDF 为什么提取不出文字？
+- [x] `chunk` 结构优先：按空行切段、trim 丢空段、贪心打包不拆散段落、`\n\n` 分隔符计入块长度
+- [x] 超长段先 flush 再硬切；硬切相邻块重叠恰好 overlapChars（末尾块可例外）；去重叠拼接能还原原段落（覆盖性）
+- [x] 所有长度判断与切片基于码点（`Array.from` / 展开 / `for..of`），含 emoji 的文档切完每个块 `isWellFormed()` 为 true
+- [x] `overlapChars >= maxChars`、负数、缺省 options 都有防御，硬切不死循环
+- [x] `embedTexts` 按响应 `index` 归位；index 越界、数量不符、维度 ≠ 1024、归位有空洞都报错
+- [x] 响应非 200 时错误信息包含状态码与响应体
+- [x] `EMBEDDING_MOCK=1` 路径不碰网络、无需 key，且**同一文本多次调用返回相同向量**（确定性）
+- [x] ingest 组装：id 含来源信息、metadata 带 `{source, chunk}`、add/save 异常被兜住并返回带信息的 500、成功返回块数与库总量
+- [x] `pnpm build` 通过；`EMBEDDING_MOCK=1 pnpm dev` 下 `curl -F "file=@sample.md" localhost:3000/api/ingest` 返回 `{"ok":true,...}` 且 `data/kb.json` 落盘
+- [x] 能口头回答：JS 字符串为什么按 code unit 索引、emoji 为什么会被切坏？为什么 mock 必须确定性？为什么 embedding 响应要按 index 归位？chunk 太大/太小各自伤什么？
+- [x] （进阶）PDF 分支：白名单放行 `.pdf`；用 `arrayBuffer()` + unpdf 提取文本（`mergePages: true`），解析失败返回带信息的 400 而非裸 500；提取出的文本与 md/txt 走**完全相同**的 chunk/embed/入库管线
+- [x] （进阶）实测：手写或生成一个最小 PDF，`EMBEDDING_MOCK=1` 下 `curl -F` 上传返回 `{"ok":true,...}` 且 `data/kb.json` 中 text 是真实提取文字（非乱码）；伪装扩展名的坏文件被 400 兜住
+- [x] （进阶）能口头回答：为什么不能 `file.text()` 读 PDF？pdf-parse 在 Next.js 打包下为什么 import 即崩、怎么绕？扫描件 PDF 为什么提取不出文字？

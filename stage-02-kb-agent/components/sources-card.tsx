@@ -11,6 +11,9 @@
 "use client";
 
 import type { KbUIMessage } from "@/lib/chat-types";
+import { useState } from "react";
+
+const PREVIEW_CHARS = 80;
 
 export function SourcesCard({ message }: { message: KbUIMessage }) {
   // TODO(练习7): 引用来源卡片（渲染 data part 里的检索来源）
@@ -47,6 +50,67 @@ export function SourcesCard({ message }: { message: KbUIMessage }) {
   // 点击能展开全文，再点收起。完成 TODO① 后，卡片内容应来自真实检索结果。
   //
   // 参考答案：docs/solutions/stage-02/exercise-7-chat-ui.md（完成后再看）
-  void message; // 骨架期避免未使用告警；实现后删除本行
-  return null;
+
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  const part = message.parts.find((p) => p.type === "data-sources");
+  if (!part || part.data.length === 0) {
+    return null;
+  }
+
+  const sources = part.data;
+
+  const toggle = (i: number) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) {
+        next.delete(i);
+      } else {
+        next.add(i);
+      }
+      return next;
+    });
+  };
+
+  return (
+    <div style={{ marginTop: 10, borderTop: "1px solid #ddd", paddingTop: 8 }}>
+      <div style={{ fontSize: 12, color: "#888", marginBottom: 6 }}>
+        资料来源（{sources.length}）, 点击卡片展开原文
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {sources.map((s, i) => {
+          const isOpen = expanded.has(i);
+          const chars = Array.from(s.text);
+          const preview =
+            chars.length > PREVIEW_CHARS
+              ? chars.slice(0, PREVIEW_CHARS).join("") + "..."
+              : s.text;
+          return (
+            <div
+              key={s.id}
+              onClick={() => toggle(i)}
+              style={{
+                cursor: "pointer",
+                background: "#fff",
+                border: "1px solid #e0e0e0",
+                borderRadius: 6,
+                padding: "6px 10px",
+                fontSize: 13,
+              }}
+            >
+              <div style={{ fontWeight: 600 }}>
+                [{i + 1}]{s.source}* 第{s.chunk} 块 * 相关度{" "}
+                {s.score.toFixed(3)}
+              </div>
+              <div
+                style={{ color: "#555", whiteSpace: "pre-wrap", marginTop: 2 }}
+              >
+                {isOpen ? s.text : preview}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }

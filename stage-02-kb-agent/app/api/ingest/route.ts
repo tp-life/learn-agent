@@ -13,6 +13,11 @@
 
 import { NextResponse } from "next/server";
 import { getKbStore, KB_PATH } from "@/lib/kb";
+import { chunk } from "@/lib/chunk";
+import { error } from "node:console";
+import { embedTexts } from "@/lib/embed";
+import type { Document } from "@/lib/vectorstore";
+import { extractText } from "unpdf";
 
 /** 上传文件大小上限：5MB。个人知识库的 md/txt 文档远超够用。 */
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -30,34 +35,58 @@ export async function POST(req: Request) {
   } catch {
     return NextResponse.json(
       { error: "请求体不是合法的 multipart/form-data" },
-      { status: 400 }
+      { status: 400 },
     );
   }
   const file = form.get("file");
   if (!(file instanceof File)) {
     return NextResponse.json(
       { error: '缺少文件字段：请用 multipart 表单上传，字段名 "file"' },
-      { status: 400 }
+      { status: 400 },
     );
   }
+
+  const isPdf = /\.pdf$/i.test(file.name);
 
   // 扩展名白名单：md/txt 是纯文本，file.text() 直接读；
   // PDF 支持是进阶要求（见下方 TODO；参考答案"进阶实现"一节有
   // 经过验证的完整实现，依赖 unpdf）。
-  if (!/\.(md|txt)$/i.test(file.name)) {
+  if (!isPdf && !/\.(md|txt)$/i.test(file.name)) {
     return NextResponse.json(
-      { error: `暂不支持的文件类型：${file.name}（目前只支持 .md / .txt）` },
-      { status: 400 }
+      {
+        error: `暂不支持的文件类型：${file.name}（目前只支持 .md / .txt/ .pdf）`,
+      },
+      { status: 400 },
     );
   }
   if (file.size > MAX_FILE_BYTES) {
     return NextResponse.json(
       { error: `文件过大：${file.size} 字节，上限 ${MAX_FILE_BYTES} 字节` },
-      { status: 413 }
+      { status: 413 },
     );
   }
 
-  const text = await file.text();
+  let text: string = "";
+  if (isPdf) {
+    try {
+      const result = await extractText(
+        new Uint8Array(await file.arrayBuffer()),
+        {
+          mergePages: true,
+        },
+      );
+      text = result.text;
+    } catch (err) {
+      return NextResponse.json(
+        {
+          error: `PDF 解析失败：${err instanceof Error ? err.message : String(err)}`,
+        },
+        { status: 400 },
+      );
+    }
+  } else {
+    text = await file.text();
+  }
   if (text.trim() === "") {
     return NextResponse.json({ error: "文件内容为空" }, { status: 400 });
   }
@@ -99,8 +128,37 @@ export async function POST(req: Request) {
   //
   // 参考答案：docs/solutions/stage-02/exercise-6-ingest-pipeline.md（完成后再看）
   void getKbStore; // 骨架期避免未使用告警；实现组装逻辑后删除本行
-  return NextResponse.json(
-    { error: "ingest 组装逻辑尚未实现（练习 6，见本文件 TODO）" },
-    { status: 501 }
-  );
+
+  const chunks = chunk(text);
+  if (chunks.length === 0) {
+    return NextResponse.json({ error: "文档切分结果为空" }, { status: 400 });
+  }
+
+  try {
+    const vectors = await embedTexts(chunks);
+    const store = getKbStore();
+    const docs: Document[] = chunks.map(
+      (t, i) =>
+        ({
+          id: `${file.name}#${i}`,
+          text: t,
+          vector: vectors[i],
+          metadata: { source: file.name, chunk: String(i) },
+        }) as Document,
+    );
+
+    store.add(...docs);
+    store.save(KB_PATH);
+    return NextResponse.json({
+      ok: true,
+      file: file.name,
+      chunks: chunks.length,
+      total: store.size,
+    });
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
+    );
+  }
 }

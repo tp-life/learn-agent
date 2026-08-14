@@ -52,27 +52,9 @@ const CHAT_MODEL = "deepseek-chat";
 /** 检索返回的块数（top-k）。调它会影响 recall，是练习 8-9 的调参位之一。 */
 const TOP_K = 3;
 
-/**
- * 骨架期的占位 system prompt：不携带任何检索资料。
- * TODO(练习7)① 完成后会被"资料块 + 防幻觉指令"的 prompt 替换。
- */
-const PLACEHOLDER_SYSTEM =
-  "你是一个知识库助手。当前检索功能尚未接入（练习 7 TODO①），请如实告知用户知识库问答尚未就绪。";
-
-/**
- * CHAT_MOCK=1 时的罐装引用：不依赖检索，让前端引用卡片（TODO 练习7②）
- * 在完成检索逻辑之前就能联调。TODO① 完成后，mock 模式也应改为使用
- * 真实检索结果——mock 只替换 LLM，检索管线保持真实。
- */
-const CANNED_SOURCES: SourceItem[] = [
-  {
-    id: "canned.md#0",
-    source: "canned.md",
-    chunk: "0",
-    text: "这是一条罐装引用（CHAT_MOCK=1），用于在没有 DeepSeek key 的情况下联调前端引用卡片。真实模式下这里会是向量检索 top-k 的命中块。",
-    score: 0.99,
-  },
-];
+const NO_KB_SYSTEM =
+  "你是一个知识库问答助手，当前知识库为空，没有任何可查的资料," +
+  "请如实告知用户：知识库还没有内容，请先上传文档，不要凭自己的知识回答。";
 
 /**
  * CHAT_MOCK=1 时的罐装回答。故意带上 [1] 编号，
@@ -81,6 +63,22 @@ const CANNED_SOURCES: SourceItem[] = [
 const CANNED_ANSWER =
   "（罐装回答）根据资料 [1]，当前处于 CHAT_MOCK 模式：LLM 被替换为确定性假模型，" +
   "但请求解析、流式协议、引用下发的整条管线都是真的。";
+
+function buildRagSystemPrompt(sources: SourceItem[]): string {
+  const blocks = sources
+    .map((s, i) => `[${i + 1}]（来源：${s.source} 第${s.chunk}块）\n${s.text}`)
+    .join("\n\n");
+  return [
+    "你是一个知识库问答助手，下面是按相关度排序的检索资料，编号即引用编号。",
+    "",
+    blocks,
+    "",
+    "回答要求：",
+    "1. 仅根据资料回答，不要动用资料之外的知识；",
+    "2. 资料不足以回答时，明确说「根据现有资料无法回答」，不要编造；",
+    "3. 回答中用到资料时，在句末标注来源编号，如 [1] [2]",
+  ].join("\n");
+}
 
 /**
  * mockChatModel 返回一个"确定性假 LLM"（可测试性教学点，与 EMBEDDING_MOCK 同源）：
@@ -114,7 +112,12 @@ function mockChatModel(): LanguageModel {
             type: "finish",
             finishReason: { unified: "stop", raw: undefined },
             usage: {
-              inputTokens: { total: 0, noCache: 0, cacheRead: 0, cacheWrite: 0 },
+              inputTokens: {
+                total: 0,
+                noCache: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+              },
               outputTokens: {
                 total: CANNED_ANSWER.length,
                 text: CANNED_ANSWER.length,
@@ -138,7 +141,10 @@ export async function POST(req: Request) {
   }
   const messages = body.messages;
   if (!Array.isArray(messages) || messages.length === 0) {
-    return NextResponse.json({ error: "缺少 messages（UIMessage 数组）" }, { status: 400 });
+    return NextResponse.json(
+      { error: "缺少 messages（UIMessage 数组）" },
+      { status: 400 },
+    );
   }
 
   const chatMock = process.env.CHAT_MOCK === "1";
@@ -206,8 +212,11 @@ export async function POST(req: Request) {
   } else {
     if (!process.env.DEEPSEEK_API_KEY) {
       return NextResponse.json(
-        { error: "DEEPSEEK_API_KEY 未设置（没有 key 时可设 CHAT_MOCK=1 走 mock 路径）" },
-        { status: 500 }
+        {
+          error:
+            "DEEPSEEK_API_KEY 未设置（没有 key 时可设 CHAT_MOCK=1 走 mock 路径）",
+        },
+        { status: 500 },
       );
     }
     model = deepseek.chat(CHAT_MODEL);
