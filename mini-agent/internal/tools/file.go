@@ -21,7 +21,7 @@ func (f FileTool) resolve(p string) (string, error) {
 	root := filepath.Clean(f.Root)
 	full := filepath.Clean(filepath.Join(root, p))
 
-	if full != root && !strings.HasPrefix(full, root+string(os.PathListSeparator)) {
+	if full != root && !strings.HasPrefix(full, root+string(os.PathSeparator)) {
 		return "", fmt.Errorf("路径越出工作目录 : %q", p)
 	}
 

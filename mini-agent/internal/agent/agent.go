@@ -27,6 +27,11 @@ type Agent struct {
 	MaxSteps int // 防止死循环的保险丝：模型可能反复调工具停不下来
 	Verbose  bool
 
+	// usage 累计本次任务所有 LLM 调用的 token 用量。
+	// 阶段三的编排器需要按子任务核算成本（预算熔断、模型分级的收益量化），
+	// 所以内核必须把用量暴露出来——否则上层只能瞎估。
+	usage llm.Usage
+
 	// OnDelta 若设置，模型生成的文本增量会实时回调（用于流式打印）。
 	// 注意：只有模型在写最终回答时才有 content 增量；当它决定调工具时，
 	// 流式分片里是 tool_calls 而非 content，不会触发这个回调。
@@ -61,6 +66,11 @@ func (a *Agent) Run(userInput string) (string, error) {
 		}
 		choice := resp.Choices[0]
 		msg := choice.Message
+
+		// 累计 token 用量（含流式聚合后的响应），供上层做成本核算。
+		a.usage.PromptTokens += resp.Usage.PromptTokens
+		a.usage.CompletionTokens += resp.Usage.CompletionTokens
+		a.usage.TotalTokens += resp.Usage.TotalTokens
 
 		// 关键：assistant 的消息（含 tool_calls）必须原样放回历史，
 		// 否则后续 role=tool 的消息失去对应关系，API 会报错。
@@ -108,6 +118,13 @@ func (a *Agent) Run(userInput string) (string, error) {
 
 func (a *Agent) Messages() []llm.Message {
 	return a.messages
+}
+
+// Usage 返回本次任务累计的 token 用量（所有 ReAct 轮次之和）。
+// 阶段三编排器用它把成本核算到每个子任务：worker 执行完一个子任务后
+// 读取 Usage()，随 checkpoint 落盘，供预算熔断与"哪个子任务最贵"分析。
+func (a *Agent) Usage() llm.Usage {
+	return a.usage
 }
 
 // ============================ 练习区（由学习者完成） ============================

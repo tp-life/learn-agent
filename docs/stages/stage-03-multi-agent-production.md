@@ -9,7 +9,7 @@
 ## 〇、本阶段的项目结构决策
 
 - **项目 3 新建 `stage-03-multi-agent/` 目录**，不再把代码塞进 `mini-agent/`。阶段二是"概念练习进 mini-agent"（RAG/Memory 作为 mini-agent 的能力扩展）；阶段三是一个**独立的产品化项目**——多 Agent 任务系统有自己的 HTTP API、持久化、前端看板，放进 mini-agent 会把"学习框架"和"产品"两个职责混在一起。
-- **Go 侧通过 go.mod `replace` 引用 `mini-agent/` 的 agent 内核**（`internal/agent` 的 ReAct 循环、`internal/llm` 的重试+流式客户端），作为编排系统中的"单 agent 执行体"（worker）。理由：体现"复用而非重写"——编排层管的是任务分解、并发、状态、恢复，单 agent 的 ReAct 循环本身不需要重写一遍；这也强制 mini-agent 的内核接口设计得可被外部消费，是阶段一产出的最好检验。注意：`mini-agent` 的 `internal/` 包按 Go 规则不能被 module 外引用，启动时需评估是把内核提升为可导出包，还是把项目 3 放进同一 module——届时在阶段启动的第一个任务里定夺并记录。
+- **Go 侧通过 go.mod `replace` 引用 `mini-agent/` 的 agent 内核**（`internal/agent` 的 ReAct 循环、`internal/llm` 的重试+流式客户端），作为编排系统中的"单 agent 执行体"（worker）。理由：体现"复用而非重写"——编排层管的是任务分解、并发、状态、恢复，单 agent 的 ReAct 循环本身不需要重写一遍；这也强制 mini-agent 的内核接口设计得可被外部消费，是阶段一产出的最好检验。**决策已落定（2026-08-14，阶段材料创建时）**：`internal/` 包按目录树规则不能被 module 外引用，采用方案是新增 **`mini-agent/api/` 门面包**——用类型别名 + 函数转发把内核（agent/llm/tools/embed/vectorstore/rag/memory）提升为可导出包，不搬动 internal 下任何文件（阶段一/二代码零影响）；stage-03 侧 `go.mod` 配 `replace mini-agent => ../mini-agent`。顺带偿还了一笔接口债：`agent.Agent` 新增 `Usage()` 暴露 token 用量，供编排器做子任务级成本核算与预算熔断。
 - **TS 实时看板放 `stage-03-multi-agent/web/` 子目录**（Next.js），与 Go 引擎通过 HTTP/SSE 通信，同一个 git 目录、两个技术栈。理由：Go 引擎 + TS 看板的"编排引擎与可视化分离"本身就是简历考察点——面试官会问"为什么后端用 Go 而不是全 TS"，答案要落在"goroutine/errgroup 做并发编排的表达力"上。
 
 ## 〇.五、阶段知识图谱
@@ -221,20 +221,22 @@ LLM 输出不确定性 → **结构化输出 + 校验兜底**。① 用 JSON sch
 ## 五、已完成
 
 - ✅ 阶段三教程预写（本文档）
+- ✅ 项目 3 `stage-03-multi-agent/` 模块初始化 + 练习 1-9 骨架（TODO 标注）与参考答案全部就绪（2026-08-14；答案均经 go vet/go test/npm build 实测验证后入库，项目代码保持骨架态）
+- ✅ `mini-agent/api/` 门面包（内核导出决策落地）+ `agent.Agent.Usage()` 接口债偿还
 
 ## 六、下一步（练习/任务清单，带状态）
 
 | #   | 练习                                                                                              | 考察点                              | 计划代码位置                              | 状态 |
 | --- | ------------------------------------------------------------------------------------------------- | ----------------------------------- | ----------------------------------------- | ---- |
-| 1   | Go 并发热身：errgroup + context 预算的 worker pool（带 semaphore 限流）                            | Go 并发基本功                       | `stage-03-multi-agent/internal/pool`       | ⬜ 未开始（骨架与参考答案将在阶段启动时按 AGENTS.md 约定同步创建） |
-| 2   | 任务状态机 + SQLite checkpoint 持久化 + 崩溃恢复演练（kill 进程→重启→续跑）                        | 状态机设计、持久化                  | `stage-03-multi-agent/internal/task`       | ⬜ 未开始（同上） |
-| 3   | Planner/Worker 编排器：planner 输出结构化 JSON 计划（schema 校验），worker 复用 mini-agent 内核   | 编排模式落地、内核复用              | `stage-03-multi-agent/internal/orchestrator` | ⬜ 未开始（同上） |
-| 4   | Critic 评审循环：生成-评审打回重做 + 最大轮次 / token 成本双重熔断                                  | 质量控制、成本熔断                  | `stage-03-multi-agent/internal/orchestrator` | ⬜ 未开始（同上） |
-| 5   | Human-in-the-loop 审批点：中断/恢复 API + CLI 演示（高风险子任务暂停，approve 后续跑）              | 状态外置、事件驱动恢复              | `stage-03-multi-agent/internal/hitl`       | ⬜ 未开始（同上） |
-| 6   | Langfuse trace 接入：嵌套 span 对应 agent 层级（任务→子任务→单次 LLM 调用）+ 每 span token 成本   | 可观测、成本核算                    | `stage-03-multi-agent/internal/trace`      | ⬜ 未开始（同上） |
-| 7   | MCP server：把 mini-agent 的工具以 stdio 暴露（tools/list、tools/call），可被任意 MCP client 消费 | MCP 协议理解                        | `stage-03-multi-agent/cmd/mcp-server`      | ⬜ 未开始（同上） |
-| 8   | 项目 3 集成：Go 编排引擎 HTTP/SSE API（提交任务、查状态、审批、流式进度）+ Next.js 实时看板       | 全栈产品化、SSE 复用                | `stage-03-multi-agent/`（引擎）+ `web/`（看板） | ⬜ 未开始（同上） |
-| 9   | 架构文档 + 故障演练报告：为什么这样拆 agent、失败如何处理、崩溃恢复/限流/熔断的演练记录            | 简历素材、表达输出                  | `stage-03-multi-agent/docs/`（文档型练习，无代码） | ⬜ 未开始（同上） |
+| 1   | Go 并发热身：errgroup + context 预算的 worker pool（带 semaphore 限流）                            | Go 并发基本功                       | `stage-03-multi-agent/internal/pool`       | 📦 骨架+参考答案就绪（2026-08-14，答案已编译/测试验证） |
+| 2   | 任务状态机 + SQLite checkpoint 持久化 + 崩溃恢复演练（kill 进程→重启→续跑）                        | 状态机设计、持久化                  | `stage-03-multi-agent/internal/task`       | 📦 骨架+参考答案就绪（同上） |
+| 3   | Planner/Worker 编排器：planner 输出结构化 JSON 计划（schema 校验），worker 复用 mini-agent 内核   | 编排模式落地、内核复用              | `stage-03-multi-agent/internal/orchestrator` | 📦 骨架+参考答案就绪（同上） |
+| 4   | Critic 评审循环：生成-评审打回重做 + 最大轮次 / token 成本双重熔断                                  | 质量控制、成本熔断                  | `stage-03-multi-agent/internal/orchestrator` | 📦 骨架+参考答案就绪（同上） |
+| 5   | Human-in-the-loop 审批点：中断/恢复 API + CLI 演示（高风险子任务暂停，approve 后续跑）              | 状态外置、事件驱动恢复              | `stage-03-multi-agent/internal/hitl`       | 📦 骨架+参考答案就绪（同上） |
+| 6   | Langfuse trace 接入：嵌套 span 对应 agent 层级（任务→子任务→单次 LLM 调用）+ 每 span token 成本   | 可观测、成本核算                    | `stage-03-multi-agent/internal/trace`      | 📦 骨架+参考答案就绪（同上） |
+| 7   | MCP server：把 mini-agent 的工具以 stdio 暴露（tools/list、tools/call），可被任意 MCP client 消费 | MCP 协议理解                        | `stage-03-multi-agent/cmd/mcp-server`      | 📦 骨架+参考答案就绪（同上） |
+| 8   | 项目 3 集成：Go 编排引擎 HTTP/SSE API（提交任务、查状态、审批、流式进度）+ Next.js 实时看板       | 全栈产品化、SSE 复用                | `stage-03-multi-agent/`（引擎）+ `web/`（看板） | 📦 骨架+参考答案就绪（同上） |
+| 9   | 架构文档 + 故障演练报告：为什么这样拆 agent、失败如何处理、崩溃恢复/限流/熔断的演练记录            | 简历素材、表达输出                  | `stage-03-multi-agent/docs/`（文档型练习，无代码） | 📦 骨架+参考答案就绪（同上） |
 
 > 按 AGENTS.md 约定：阶段启动时 AI 只写骨架 + `TODO(练习N)` 标注，参考答案同步存放于 `docs/solutions/stage-03/`，且答案必须实际编译验证（`go build` / `go vet` / `go test`）通过后方可入库；进阶/加分项必须有经验证的完整实现，不允许只写思路。
 
