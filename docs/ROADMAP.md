@@ -107,6 +107,20 @@ graph TD
 - 面试题库：ReAct 原理、RAG 调优、防幻觉、长 context 处理、agent 评估
 - 投递：Go 岗投云厂商/AI infra 公司，TS 岗投 AI 应用创业公司
 
+### 阶段五：模型原理与框架对照（第 21-22 周，或与阶段四并行）— 🔄 进行中
+
+| 类别 | 内容 | 状态 |
+| ---- | ---- | ---- |
+| 概念 | Transformer/attention 直觉、tokenizer 行为、训练三阶段（pretrain/SFT/RLHF）、推理模型 | 📖 材料就绪 |
+| 概念 | LoRA/QLoRA 概念级理解、RAG vs 微调决策框架 | 📖 材料就绪 |
+| 工具 | LangGraph 对照学习（StateGraph/checkpointer/interrupt/Send ↔ 手写系统的映射） | 📖 路径就绪 |
+| 沉淀 | `docs/stages/stage-05-model-finetuning.md` ✅；`docs/langgraph-comparison-guide.md` ✅ | ✅ 2026-08-17 |
+
+> 定位：阅读理解型阶段（不写代码），目标是把项目经验接到模型原理上、补上框架经验。
+> 与阶段四的关系：本阶段是阶段四"技术面试题库"的知识底座，可并行推进。
+
+验收标准：6 个核心概念脱稿讲出且各接一句"这解释了我项目里的……"；能讲清"LangGraph 替代了我手写的哪部分"。
+
 ---
 
 ## 进度速览
@@ -128,6 +142,8 @@ graph TD
 | 阶段三教程 + 预习指南预写                   | ✅   | 2026-08-10 |
 | 阶段四教程预写                              | ✅   | 2026-08-10 |
 | 全阶段实战教程（docs/tutorial/，14 章）撰写 | ✅   | 2026-08-16 |
+| 教程审核补遗 + 附录 A（术语速查）+ 附录 B（结课项目） | ✅   | 2026-08-17 |
+| 阶段五创建：模型原理与微调决策文档 + LangGraph 对照路径 | ✅   | 2026-08-17 |
 | 阶段三：mini-agent/api 门面 + 项目 3 模块初始化 | ✅   | 2026-08-14 |
 | 阶段三练习 1-9 骨架 + 参考答案就绪（全部实测验证） | ✅   | 2026-08-14 |
 
@@ -141,13 +157,16 @@ graph TD
 | ----------------------------------------- | ---------------------------------------------------------------- |
 | `AGENTS.md`                               | 项目规则：注释规范、技术栈约定、渐进开发约定                     |
 | `docs/ROADMAP.md`                         | 本文件：总目标、计划表、知识拓扑、进度                           |
-| `docs/tutorial/`                          | 全阶段实战教程（2026-08-16 新增）：README 导航 + 14 章，零基础到三个项目的学习主线；每章含概念详解/代码精讲/进阶拓展（带代码）/面试视角/动手练习 |
+| `docs/tutorial/`                          | 全阶段实战教程（2026-08-16 新增，2026-08-17 审核补遗）：README 导航 + 14 章 + 附录 A（术语速查）/ 附录 B（结课项目）；每章含概念详解/代码精讲/进阶拓展（带代码）/面试视角/动手练习 |
+| `docs/solutions/capstone/`                | 结课综合项目参考答案（2026-08-17 新增）：个人知识助理（会话持久化 + 审批闸门 + 内核单测 + kb_ingest），全部代码经编译与测试验证 |
 | `docs/stages/stage-XX-*.md`               | 每个阶段的沉淀：学什么、核心概念、注意事项、下一步               |
 | `docs/solutions/stage-XX/exercise-N-*.md` | 练习参考答案：参考实现 + 关键设计点 + 对照清单（完成练习后再看） |
 | `docs/embedding-vectordb-guide.md`        | 阶段二预习材料：embedding 与向量库实战指南                       |
 | `docs/multi-agent-orchestration-guide.md` | 阶段三预习材料：多 agent 编排模式 + Go 并发速查 + 生产化清单     |
 | `docs/stages/stage-03-multi-agent-production.md` | 阶段三沉淀（已预写）：多 Agent 编排 + 生产化，练习 1-9 规划 |
 | `docs/stages/stage-04-job-hunting.md`     | 阶段四沉淀（已预写）：题库索引、系统设计骨架、简历示范、投递任务清单 |
+| `docs/stages/stage-05-model-finetuning.md` | 阶段五沉淀（2026-08-17 新增）：模型原理（attention/tokenizer/训练三阶段/推理模型）+ LoRA 与 RAG vs 微调决策，阅读理解型 |
+| `docs/langgraph-comparison-guide.md`      | 阶段五配套（2026-08-17 新增）：LangGraph 整体教程——概念详解 + 与手写系统的对照 + 实战 + 面试话术 |
 | `mini-agent/`                             | 项目 1 代码；阶段二 Go 概念练习（embedding/向量库/RAG）在此扩展 |
 | `mini-agent/api/`                         | 内核对外门面（2026-08-14 新增）：类型别名导出 agent/llm/tools/rag 等，供 stage-03 跨 module 复用 |
 | `stage-02-kb-agent/`                      | 项目 2 代码（阶段二启动后创建）：全栈知识库 Agent                |
