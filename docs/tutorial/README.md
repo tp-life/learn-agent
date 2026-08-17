@@ -55,6 +55,13 @@
 | --- | --- | --- |
 | [第 14 章](14-interview-and-career.md) | 面试作战手册：题库索引、系统设计答题骨架、简历写法、STAR 行为题 | `docs/stages/stage-04-job-hunting.md` |
 
+### 附录
+
+| 篇 | 内容 |
+| --- | --- |
+| [附录 A：术语速查表](appendix-a-glossary.md) | 14 章全部核心概念的一页纸索引（概念 → 一句话定义 → 回链章节），面试前 20 分钟自测用 |
+| [附录 B：结课综合项目](appendix-b-capstone.md) | 把 mini-agent 升级为个人知识助理（会话持久化 + 审批闸门 + 内核单测 + kb_ingest 工具），一次串起三个阶段；[参考答案](../solutions/capstone/exercise-capstone-personal-assistant.md) |
+
 ## 环境准备
 
 | 依赖 | 用途 | 备注 |
