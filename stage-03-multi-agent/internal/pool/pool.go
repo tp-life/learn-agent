@@ -22,6 +22,8 @@ package pool
 import (
 	"context"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // Job 是一个待执行的子任务。
@@ -84,7 +86,7 @@ func New(maxConcurrent int, jobTimeout time.Duration) *Pool {
 //   - 用 errgroup.Group + SetLimit 最简（golang.org/x/sync/errgroup，先 go get 加入依赖）；
 //     也可以 semaphore.Weighted 自己 Acquire/Release + sync.WaitGroup，体会两种写法差别；
 //   - 结果写回预分配切片 results[i] 而不是 channel 收集：每个 goroutine 只写自己下标的槽位，
-//      disjoint 写入无数据竞争，顺序天然与 jobs 一致，也不需要额外的 fan-in goroutine；
+//     disjoint 写入无数据竞争，顺序天然与 jobs 一致，也不需要额外的 fan-in goroutine；
 //   - 关键坑：errgroup.WithContext 是"一错全停"语义（任一 goroutine 返回 error 会取消派生 ctx），
 //     与这里要的"部分失败"语义相反——所以 goroutine 要把 error 收进 results[i].Err 后 return nil，
 //     绝不能让 error 逃出 goroutine（阶段文档注意事项第 1 条）；
@@ -94,5 +96,28 @@ func New(maxConcurrent int, jobTimeout time.Duration) *Pool {
 //
 // 参考答案：docs/solutions/stage-03/exercise-1-worker-pool.md（完成后再看）
 func (p *Pool) Run(ctx context.Context, jobs []Job) []Result {
-	panic("TODO(练习1): 待实现")
+	result := make([]Result, len(jobs))
+
+	g := new(errgroup.Group)
+	g.SetLimit(p.maxConcurrent)
+
+	for i := range jobs {
+		job := jobs[i]
+		g.Go(func() error {
+			if err := ctx.Err(); err != nil {
+				result[i] = Result{ID: job.ID, Err: err}
+				return nil
+			}
+
+			jctx, cancel := context.WithTimeout(ctx, p.jobTimeout)
+			defer cancel()
+
+			v, err := job.Run(jctx)
+			result[i] = Result{ID: job.ID, Value: v, Err: err}
+			return nil
+		})
+	}
+
+	_ = g.Wait()
+	return result
 }
