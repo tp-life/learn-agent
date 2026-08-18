@@ -25,6 +25,7 @@ import (
 	// 纯 Go 实现的 SQLite 驱动（免 cgo），driver 名为 "sqlite"。
 	// 这个库替代的是"mattn/go-sqlite3 + cgo 工具链"——换来的是交叉编译零配置，
 	// 代价是极端写入吞吐略低，对学习/中小规模生产完全够用。
+
 	_ "modernc.org/sqlite"
 )
 
@@ -127,6 +128,30 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
+var taskTransitions = map[Status][]Status{
+	StatusPending:      {StatusPlanning, StatusFailed},
+	StatusPlanning:     {StatusRunning, StatusFailed},
+	StatusRunning:      {StatusWaitingHuman, StatusDone, StatusFailed},
+	StatusWaitingHuman: {StatusRunning, StatusFailed},
+}
+
+var subtaskTransitions = map[Status][]Status{
+	StatusPending:      {StatusRunning, StatusFailed},
+	StatusRunning:      {StatusDone, StatusFailed, StatusWaitingHuman, StatusPending},
+	StatusWaitingHuman: {StatusRunning, StatusFailed},
+	StatusFailed:       {StatusPending},
+}
+
+func canTransition(table map[Status][]Status, from, to Status) bool {
+	for _, allowed := range table[from] {
+		if allowed == to {
+			return true
+		}
+	}
+
+	return false
+}
+
 // ---------------------------------------------------------------------------
 // 以下是 TODO(练习2) 留给学习者的实现。
 // ---------------------------------------------------------------------------
@@ -154,58 +179,186 @@ func (s *Store) Close() error {
 //     它是崩溃恢复的入口：重启后先调它，再逐个 LoadTask 续跑。
 //
 // 验收：go test ./internal/task/ 全部通过，必须包含崩溃恢复演练测试
-// （用临时文件 DB：写入一半 → Close → 重新 Open → ListResumable 能找回任务、
+// （用临时文
+// 件 DB：写入一半 → Close → 重新 Open → ListResumable 能找回任务、
 // 已完成子任务的 output 还在、重放 CompleteSubtask 不重复累加 token）。
 //
 // 参考答案：docs/solutions/stage-03/exercise-2-task-checkpoint.md（完成后再看）
 
 // CreateTask 创建任务，初始状态 pending。
 func (s *Store) CreateTask(ctx context.Context, id, goal string) error {
-	// TODO(练习2): 实现此方法（要求见上方 TODO 块）
-	return errors.New("TODO(练习2): CreateTask 未实现")
+	if id == "" || goal == "" {
+		return fmt.Errorf("task: id and goal must not be empty")
+	}
+
+	now := time.Now()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO tasks (id, goal, status, created_at, updated_at) VALUES (?,?,?,?,?)`, id, goal, StatusPending, now, now)
+	if err != nil {
+		return fmt.Errorf("task: create %s:%w", id, err)
+	}
+
+	return nil
 }
 
 // Transition 迁移任务状态（带状态机守卫），是任务级 checkpoint 的唯一入口。
 func (s *Store) Transition(ctx context.Context, taskID string, to Status) error {
-	// TODO(练习2): 实现此方法（要求见上方 TODO 块）
-	return errors.New("TODO(练习2): Transition 未实现")
+	var from Status
+	err := s.db.QueryRowContext(ctx, `SELECT status FROM tasks WHERE id = ?`, taskID).Scan(&from)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("task: %s not found", taskID)
+	}
+
+	if err != nil {
+		return fmt.Errorf("task: read %s:%w", taskID, err)
+	}
+
+	if !canTransition(taskTransitions, from, to) {
+		return fmt.Errorf("task: illegal transition %s -> %s (task %s)", from, to, taskID)
+	}
+
+	_, err = s.db.ExecContext(ctx, `UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?`, to, time.Now(), taskID)
+	return err
 }
 
 // TransitionSubtask 迁移子任务状态（带状态机守卫）；迁入 running 时 attempts 自增。
 func (s *Store) TransitionSubtask(ctx context.Context, taskID, subID string, to Status) error {
-	// TODO(练习2): 实现此方法（要求见上方 TODO 块）
-	return errors.New("TODO(练习2): TransitionSubtask 未实现")
+	var from Status
+	err := s.db.QueryRowContext(ctx, `SELECT status FROM subtasks WHERE task_id = ? AND id = ?`, taskID, subID).Scan(&from)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("task: subtask %s/%s not found", taskID, subID)
+	}
+	if err != nil {
+		return fmt.Errorf("task: illegal subtask transition %s -> %s (%s/%s)", from, to, taskID, subID)
+	}
+
+	attemptsBump := 0
+	if to == StatusRunning {
+		attemptsBump = 1
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE subtasks SET status = ?, attempts = attempts + ?, updated_at = ? WHERE task_id = ? AND id = ?`, to, attemptsBump, time.Now(), taskID, subID)
+
+	return err
 }
 
 // SaveSubtasks 把 planner 分解出的子任务批量落盘（初始状态 pending）。
 func (s *Store) SaveSubtasks(ctx context.Context, taskID string, subs []Subtask) error {
-	// TODO(练习2): 实现此方法（要求见上方 TODO 块）
-	return errors.New("TODO(练习2): SaveSubtasks 未实现")
+	for i := range subs {
+		sub := subs[i]
+		if sub.ID == "" {
+			return fmt.Errorf("task: subtasks[%d] has empty id", i)
+		}
+		now := time.Now()
+		_, err := s.db.ExecContext(ctx,
+			`INSERT INTO subtasks (id, task_id, title, prompt, status, idempotency_key, requires_approval, created_at, updated_at)
+			VALUES (?,?,?,?,?,?,?,?,?)`, sub.ID, taskID, sub.Title, sub.Prompt, StatusPending, sub.IdempotencyKey, sub.RequiresApproval, now, now)
+		if err != nil {
+			return fmt.Errorf("task: save subtask %s/%s: %w", taskID, sub.ID, err)
+		}
+	}
+	return nil
 }
 
 // CompleteSubtask 是子任务成功时的 checkpoint：落盘 output 与 token 消耗。
 // 必须幂等：子任务已是 done（同一份幂等键的工作已完成过）时直接返回 nil，
 // 不得重复累加 token——崩溃恢复重放到这一步时靠它保证副作用不翻倍。
 func (s *Store) CompleteSubtask(ctx context.Context, taskID, subID, output string, tokens int) error {
-	// TODO(练习2): 实现此方法（要求见上方 TODO 块）
-	return errors.New("TODO(练习2): CompleteSubtask 未实现")
+	var from Status
+	var key string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT status, idempotency_key FROM subtasks WHERE task_id = ? AND id = ?`, taskID, subID).Scan(&from, &key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("task: subtasks %s/%s not found", taskID, subID)
+	}
+	if err != nil {
+		return fmt.Errorf("task: read subtask %s/%s: %w", taskID, subID, err)
+	}
+
+	if from == StatusDone {
+		return nil
+	}
+
+	if !canTransition(subtaskTransitions, from, StatusDone) {
+		return fmt.Errorf("task: illegal subtask transition %s -> %s (%s/%s)", from, StatusDone, taskID, subID)
+	}
+
+	now := time.Now()
+	_, err = s.db.ExecContext(ctx, `UPDATE subtasks SET status =?, output = ?, tokens_used = tokens_used + ?, updated_at = ? WHERE task_id = ? AND id = ?`,
+		StatusDone, output, tokens, now, taskID, subID)
+	if err != nil {
+		return fmt.Errorf("task: complete subtask %s/%s: %w", taskID, subID, err)
+	}
+
+	_, err = s.db.ExecContext(ctx, `UPDATE tasks SET total_tokens = total_tokens + ?, updated_at = ? WHERE id = ?`,
+		tokens, now, taskID)
+	return err
 }
 
 // FailSubtask 记录子任务失败（errMsg 落在 output 字段），状态迁为 failed。
 func (s *Store) FailSubtask(ctx context.Context, taskID, subID, errMsg string) error {
-	// TODO(练习2): 实现此方法（要求见上方 TODO 块）
-	return errors.New("TODO(练习2): FailSubtask 未实现")
+	var from Status
+	err := s.db.QueryRowContext(ctx, `SELECT status FROM subtasks WHERE task_id = ? AND id = ?`, taskID, subID).Scan(&from)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("task: subtask %s/%s not found", taskID, subID)
+	}
+	if err != nil {
+		return fmt.Errorf("task: illegal subtask transition %s -> %s (%s/%s)", from, StatusFailed, taskID, subID)
+	}
+
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE subtasks SET status = ?, output = ?, updated_at =? 
+		 WHERE task_id = ? AND id = ?`,
+		StatusFailed, errMsg, time.Now(), taskID, subID)
+	return err
 }
 
 // LoadTask 读出一个任务及其全部子任务的 checkpoint（崩溃恢复时据此续跑）。
 func (s *Store) LoadTask(ctx context.Context, taskID string) (*Task, []Subtask, error) {
-	// TODO(练习2): 实现此方法（要求见上方 TODO 块）
-	return nil, nil, errors.New("TODO(练习2): LoadTask 未实现")
+	t := &Task{}
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, goal, status, total_tokens,created_at, updated_at FROM tasks WHERE id = ?`, taskID).Scan(&t.ID, &t.Goal, &t.Status, &t.TotalTokens, &t.CreatedAt, &t.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, fmt.Errorf("task: %s not found", taskID)
+	}
+	if err != nil {
+		return nil, nil, fmt.Errorf("task: load %s: %w", taskID, err)
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, task_id, title, prompt, output, status, idempotency_key, tokens_used, attempts, requires_approval 
+		 FROM subtasks WHERE task_id = ? ORDER BY rowid`, taskID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("task: load subtasks of %s: %w", taskID, err)
+	}
+	defer rows.Close()
+	var subs []Subtask
+	for rows.Next() {
+		var sub Subtask
+		if err := rows.Scan(&sub.ID, &sub.TaskID, &sub.Title, &sub.Prompt, &sub.Output, &sub.Status, &sub.IdempotencyKey,
+			&sub.TokensUsed, &sub.Attempts, &sub.RequiresApproval); err != nil {
+			return nil, nil, fmt.Errorf("task: scan subtask of %s: %w", taskID, err)
+		}
+		subs = append(subs, sub)
+	}
+	return t, subs, rows.Err()
 }
 
 // ListResumable 返回所有非终态任务的 ID——崩溃恢复的入口。
 // 重启后调它拿到"上次没跑完的任务列表"，逐个 LoadTask 续跑。
 func (s *Store) ListResumable(ctx context.Context) ([]string, error) {
-	// TODO(练习2): 实现此方法（要求见上方 TODO 块）
-	return nil, errors.New("TODO(练习2): ListResumable 未实现")
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM tasks WHERE status NOT IN (?,?) ORDER BY created_at`, StatusDone, StatusFailed)
+	if err != nil {
+		return nil, fmt.Errorf("task: list resumable: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("task: scan resumable id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
